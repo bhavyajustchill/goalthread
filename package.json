@@ -1,7 +1,7 @@
 {
   "name": "@bhavyajustchill/goalthread",
-  "version": "1.0.0",
-  "description": "Autonomous Supervisor-Worker SDK and CLI for complex AI goals using Groq and OpenRouter",
+  "version": "1.0.1",
+  "description": "Autonomous Supervisor-Worker SDK and CLI for complex AI goals using OpenRouter",
   "main": "src/index.js",
   "type": "module",
   "bin": {

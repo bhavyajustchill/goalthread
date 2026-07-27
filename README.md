@@ -1,9 +1,9 @@
 # GoalThread - Autonomous Supervisor-Worker AI SDK & CLI
 
-**GoalThread** is a Node.js SDK and command-line application that completes complex goals using two independent AI threads:
+**GoalThread** is a Node.js SDK and command-line application that completes complex goals using two independent AI threads on **OpenRouter**:
 
-1. **Supervisor Thread (Groq)**: Plans the project, generates task contracts, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance.
-2. **Worker Thread (OpenRouter)**: Executes assigned tasks, returns structured evidence and deliverables, and reports limitations.
+1. **Supervisor Thread (OpenRouter)**: Plans the project, generates task contracts, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance (Default: `google/gemini-2.5-flash`).
+2. **Worker Thread (OpenRouter)**: Executes assigned tasks, returns structured evidence and deliverables, and reports limitations (Default: `deepseek/deepseek-v4-flash`).
 
 Powered by **Vercel AI SDK**, **Zod** schema enforcement, and **SQLite** transactional persistence.
 
@@ -13,7 +13,7 @@ Powered by **Vercel AI SDK**, **Zod** schema enforcement, and **SQLite** transac
 
 ### 1. Installation
 
-Clone or download the repository, then install dependencies:
+Install globally via npm:
 
 ```bash
 npm install -g @bhavyajustchill/goalthread
@@ -39,15 +39,16 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Open `.env` and add your **Groq** and **OpenRouter** API keys:
+Open `.env` and add your **OpenRouter** API key:
 
 ```env
-# Supervisor AI Credentials (Groq)
-GROQ_API_KEY=gsk_your_groq_api_key_here
-GROQ_SUPERVISOR_MODEL=llama-3.3-70b-versatile
-
-# Worker AI Credentials (OpenRouter)
+# OpenRouter Credentials
 OPENROUTER_API_KEY=sk-or-v1-your_openrouter_api_key_here
+
+# Supervisor AI Model on OpenRouter
+OPENROUTER_SUPERVISOR_MODEL=google/gemini-2.5-flash
+
+# Worker AI Model on OpenRouter
 OPENROUTER_WORKER_MODEL=deepseek/deepseek-v4-flash
 
 # Storage Settings

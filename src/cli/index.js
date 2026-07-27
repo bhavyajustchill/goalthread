@@ -45,6 +45,7 @@ program
   .description('Execute an autonomous goal using Supervisor and Worker threads')
   .option('-s, --supervisor-model <model>', 'Supervisor model override')
   .option('-w, --worker-model <model>', 'Worker model override')
+  .option('--supervisor-provider <provider>', 'Supervisor provider override (groq or openrouter)')
   .option('-m, --max-tasks <number>', 'Maximum tasks limit', parseInt, 100)
   .option('--mock', 'Run in offline mock mode for testing')
   .action(async (goal, options) => {
@@ -53,8 +54,8 @@ program
 
     const client = new GoalThread({
       supervisor: {
-        provider: options.mock ? 'mock' : 'groq',
-        model: options.supervisorModel || process.env.GROQ_SUPERVISOR_MODEL || 'llama-3.3-70b-versatile',
+        provider: options.mock ? 'mock' : (options.supervisorProvider || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter'),
+        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-2.5-flash',
       },
       worker: {
         provider: options.mock ? 'mock' : 'openrouter',
@@ -127,8 +128,8 @@ program
 
     const client = new GoalThread({
       supervisor: {
-        provider: options.mock ? 'mock' : (options.supervisorProvider || 'groq'),
-        model: options.supervisorModel || process.env.GROQ_SUPERVISOR_MODEL || 'llama-3.1-8b-instant',
+        provider: options.mock ? 'mock' : (options.supervisorProvider || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter'),
+        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-2.5-flash',
       },
       worker: {
         provider: options.mock ? 'mock' : 'openrouter',

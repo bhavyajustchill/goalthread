@@ -3,7 +3,7 @@ import { MockLanguageModel } from './factory.js';
 import { SchemaValidationError, ProviderError } from '../errors/index.js';
 
 /**
- * Executes a structured AI request using Vercel AI SDK generateObject with automatic retry loop
+ * Executes a structured AI request using Vercel AI SDK generateObject with automatic retry loop & rate-limit backoff
  *
  * @param {Object} params
  * @param {Object} params.model - Language model instance from factory
@@ -11,7 +11,7 @@ import { SchemaValidationError, ProviderError } from '../errors/index.js';
  * @param {string} params.prompt - Main user/prompt content
  * @param {string} [params.system] - System prompt instructions
  * @param {number} [params.temperature] - Generation temperature
- * @param {number} [params.maxRetries=3] - Maximum retry attempts on validation error
+ * @param {number} [params.maxRetries=5] - Maximum retry attempts on validation or rate limit error
  * @param {Function} [params.mockGenerator] - Function producing mock data when model is MockLanguageModel
  * @returns {Promise<{ object: any, usage: { promptTokens: number, completionTokens: number, totalTokens: number } }>}
  */
@@ -21,7 +21,7 @@ export async function generateStructuredOutput({
   prompt,
   system,
   temperature = 0.1,
-  maxRetries = 3,
+  maxRetries = 5,
   mockGenerator,
 }) {
   // Mock mode handling
@@ -47,7 +47,7 @@ export async function generateStructuredOutput({
         schema,
         system,
         prompt,
-        temperature: Math.min(0.7, temperature + (attempt - 1) * 0.1),
+        temperature: Math.min(0.7, temperature + (attempt - 1) * 0.05),
       });
 
       totalPromptTokens += result.usage?.promptTokens || 0;
@@ -64,9 +64,16 @@ export async function generateStructuredOutput({
     } catch (error) {
       lastError = error;
 
-      // Exponential backoff pause before retry
       if (attempt < maxRetries) {
-        const delayMs = Math.pow(2, attempt) * 500;
+        const isRateLimit =
+          error.message &&
+          (error.message.includes('tokens per minute') ||
+            error.message.includes('TPM') ||
+            error.message.includes('rate limit') ||
+            error.message.includes('429'));
+
+        // If rate limit / TPM error, wait 7 seconds to let rate limit window refill
+        const delayMs = isRateLimit ? 7000 : Math.pow(2, attempt) * 500;
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
