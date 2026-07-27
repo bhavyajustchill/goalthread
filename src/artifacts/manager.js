@@ -71,27 +71,47 @@ export class ArtifactManager {
   exportFinalBundle(runId, history, { filename = 'final.md' } = {}) {
     const runDir = this.getRunDirectory(runId);
 
-    // 1. Synthesize final markdown document from accepted tasks
+    // 1. Synthesize final markdown document from worker results
     let finalMarkdownContent = `# Deliverable: ${history.goalSpec?.title || history.run?.goal}\n\n`;
     finalMarkdownContent += `**Goal:** ${history.run?.goal}\n\n`;
     finalMarkdownContent += `**Completed At:** ${new Date().toISOString()}\n\n`;
     finalMarkdownContent += `---\n\n`;
 
-    const passedTasks = history.tasks.filter((t) => t.status === 'passed');
-    passedTasks.forEach((t) => {
-      const res = history.workerResults.find((r) => r.taskId === t.taskId);
-      if (res && res.data) {
-        finalMarkdownContent += `## Task: ${t.title}\n\n`;
-        finalMarkdownContent += `### Summary\n${res.data.summary}\n\n`;
-        if (res.data.deliverables && Object.keys(res.data.deliverables).length > 0) {
-          finalMarkdownContent += `### Deliverables\n`;
-          for (const [key, val] of Object.entries(res.data.deliverables)) {
-            finalMarkdownContent += `#### ${key}\n${typeof val === 'object' ? JSON.stringify(val, null, 2) : val}\n\n`;
+    const resultsToInclude = history.workerResults && history.workerResults.length > 0 ? history.workerResults : [];
+    
+    if (resultsToInclude.length === 0 && history.tasks) {
+      history.tasks.forEach((t) => {
+        finalMarkdownContent += `## Task: ${t.title}\nStatus: ${t.status}\n\n---\n\n`;
+      });
+    } else {
+      resultsToInclude.forEach((res) => {
+        const taskId = res.taskId || res.task_id;
+        const taskObj = history.tasks?.find((t) => t.taskId === taskId || t.task_id === taskId);
+        const title = taskObj?.title || taskId;
+        const data = res.data || res;
+
+        if (data) {
+          finalMarkdownContent += `## Section: ${title}\n\n`;
+          if (data.summary) {
+            finalMarkdownContent += `### Summary & Key Findings\n${data.summary}\n\n`;
           }
+          if (data.deliverables && typeof data.deliverables === 'object') {
+            for (const [key, val] of Object.entries(data.deliverables)) {
+              finalMarkdownContent += `### ${key.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase())}\n`;
+              finalMarkdownContent += `${typeof val === 'object' ? JSON.stringify(val, null, 2) : val}\n\n`;
+            }
+          }
+          if (data.evidence && Array.isArray(data.evidence) && data.evidence.length > 0) {
+            finalMarkdownContent += `### Evidence & References\n`;
+            data.evidence.forEach((ev) => {
+              finalMarkdownContent += `- **Source:** ${ev.source || 'N/A'}\n  ${ev.content}\n`;
+            });
+            finalMarkdownContent += `\n`;
+          }
+          finalMarkdownContent += `---\n\n`;
         }
-        finalMarkdownContent += `---\n\n`;
-      }
-    });
+      });
+    }
 
     const mainMdPath = this.writeArtifact(runId, filename, finalMarkdownContent, { mimeType: 'text/markdown' });
 
@@ -118,8 +138,9 @@ export class ArtifactManager {
 
     md += `## Task Log\n`;
     history.tasks.forEach((t) => {
-      const rev = history.supervisorReviews.find((r) => r.taskId === t.taskId);
-      md += `- [${t.status.toUpperCase()}] **${t.taskId}**: ${t.title} (Decision: ${rev?.data?.decision || 'N/A'})\n`;
+      const taskId = t.taskId || t.task_id;
+      const rev = history.supervisorReviews.find((r) => r.taskId === taskId || r.task_id === taskId);
+      md += `- [${t.status.toUpperCase()}] **${taskId}**: ${t.title} (Decision: ${rev?.data?.decision || 'N/A'})\n`;
     });
 
     return md;

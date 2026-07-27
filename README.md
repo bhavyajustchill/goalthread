@@ -178,6 +178,8 @@ const result = await client.run({
 | `goalthread resume <runId>` | Resumes an interrupted run from SQLite checkpoint. |
 | `goalthread status <runId>` | Displays current phase, progress %, tokens used, and estimated cost. |
 | `goalthread history <runId>` | Displays detailed task timeline and Supervisor review scores. |
+| `goalthread export <runId>` | Exports final Markdown report and JSON history files. |
+| `goalthread clean [runId]` | Clears database history and deletes output artifact folders. |
 | `goalthread doctor` | Validates Node environment, API keys, and SQLite permissions. |
 
 ---

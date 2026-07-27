@@ -313,4 +313,28 @@ export class GoalThreadRepository {
       events,
     };
   }
+
+  /**
+   * Clears history for a specific run or all runs if no runId passed
+   */
+  clearHistory(runId) {
+    if (runId) {
+      this.db.run(`DELETE FROM runs WHERE id = ?`, [runId]);
+      this.db.run(`DELETE FROM goal_specifications WHERE run_id = ? OR goal_id = ?`, [runId, runId]);
+      this.db.run(`DELETE FROM tasks WHERE run_id = ?`, [runId]);
+      this.db.run(`DELETE FROM worker_results WHERE run_id = ?`, [runId]);
+      this.db.run(`DELETE FROM supervisor_reviews WHERE run_id = ?`, [runId]);
+      this.db.run(`DELETE FROM artifacts WHERE run_id = ?`, [runId]);
+      this.db.run(`DELETE FROM events WHERE run_id = ?`, [runId]);
+    } else {
+      this.db.run(`DELETE FROM runs`);
+      this.db.run(`DELETE FROM goal_specifications`);
+      this.db.run(`DELETE FROM tasks`);
+      this.db.run(`DELETE FROM worker_results`);
+      this.db.run(`DELETE FROM supervisor_reviews`);
+      this.db.run(`DELETE FROM artifacts`);
+      this.db.run(`DELETE FROM events`);
+    }
+    this.checkpoint();
+  }
 }

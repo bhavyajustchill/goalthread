@@ -241,6 +241,58 @@ program
     }
   });
 
+// 7. export command
+program
+  .command('export <runId>')
+  .description('Export final deliverable markdown and json files for a run')
+  .action(async (runId) => {
+    try {
+      const client = new GoalThread();
+      const history = await client.getRun(runId);
+
+      if (!history || !history.run) {
+        console.log(chalk.red(`Run ID "${runId}" not found.`));
+        return;
+      }
+
+      const meta = client.artifactManager.exportFinalBundle(runId, history);
+      console.log(chalk.green.bold(`\n✓ Deliverables exported successfully!`));
+      console.log(chalk.cyan(`Deliverable path:`), meta.path, '\n');
+    } catch (err) {
+      console.log(chalk.red(`Failed to export deliverables: ${err.message}`));
+    }
+  });
+
+// 8. clean command
+program
+  .command('clean [runId]')
+  .alias('clear')
+  .description('Clear run history from SQLite database and delete generated output artifacts')
+  .option('-a, --all', 'Delete all runs and reset workspace output folder')
+  .action(async (runId, options) => {
+    try {
+      const client = new GoalThread();
+      if (runId) {
+        await client.clearHistory(runId);
+        const targetDir = path.join(client.config.artifacts.directory, runId);
+        if (fs.existsSync(targetDir)) {
+          fs.rmSync(targetDir, { recursive: true, force: true });
+        }
+        console.log(chalk.green(`\n✓ Successfully deleted history and artifacts for run: ${runId}\n`));
+      } else {
+        await client.clearHistory();
+        const runsDir = client.config.artifacts.directory;
+        if (fs.existsSync(runsDir)) {
+          fs.rmSync(runsDir, { recursive: true, force: true });
+          fs.mkdirSync(runsDir, { recursive: true });
+        }
+        console.log(chalk.green('\n✓ Successfully cleared all run history from database and artifacts folder!\n'));
+      }
+    } catch (err) {
+      console.log(chalk.red(`Failed to clean history: ${err.message}`));
+    }
+  });
+
 // 6. doctor command
 program
   .command('doctor')

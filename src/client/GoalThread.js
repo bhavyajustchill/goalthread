@@ -142,6 +142,15 @@ export class GoalThread extends EventEmitter {
   }
 
   /**
+   * Clears database history for a specific run or all runs
+   * @param {string} [runId]
+   */
+  async clearHistory(runId) {
+    const repository = await this.initStorage();
+    repository.clearHistory(runId);
+  }
+
+  /**
    * Cancels an active run
    * @param {Object} options
    * @param {string} options.runId
