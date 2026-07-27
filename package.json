@@ -1,5 +1,5 @@
 {
-  "name": "goalthread",
+  "name": "@bhavyajustchill/goalthread",
   "version": "1.0.0",
   "description": "Autonomous Supervisor-Worker SDK and CLI for complex AI goals using Groq and OpenRouter",
   "main": "src/index.js",
@@ -18,6 +18,14 @@
     "start": "node src/index.js",
     "doctor": "node bin/goalthread.js doctor"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bhavyajustchill/goalthread.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bhavyajustchill/goalthread/issues"
+  },
+  "homepage": "https://github.com/bhavyajustchill/goalthread#readme",
   "keywords": [
     "ai",
     "agent",
@@ -31,6 +39,9 @@
   ],
   "author": "BhavyaJustChill",
   "license": "ISC",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@ai-sdk/groq": "^1.1.0",
     "@ai-sdk/openai": "^1.1.0",

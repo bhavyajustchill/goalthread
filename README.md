@@ -16,7 +16,13 @@ Powered by **Vercel AI SDK**, **Zod** schema enforcement, and **SQLite** transac
 Clone or download the repository, then install dependencies:
 
 ```bash
-npm install
+npm install -g @bhavyajustchill/goalthread
+```
+
+Or install as a dependency in your Node.js project:
+
+```bash
+npm install @bhavyajustchill/goalthread
 ```
 
 ---
@@ -130,7 +136,7 @@ npm test
 You can also use GoalThread as a library in your own Node.js applications:
 
 ```javascript
-import { GoalThread } from 'goalthread';
+import { GoalThread } from '@bhavyajustchill/goalthread';
 
 const client = new GoalThread({
   supervisor: {
