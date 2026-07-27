@@ -1,0 +1,421 @@
+import crypto from 'crypto';
+import { generateStructuredOutput } from '../providers/adapter.js';
+import { MockLanguageModel } from '../providers/factory.js';
+import {
+  GoalSpecificationSchema,
+  TaskContractSchema,
+  WorkerResultSchema,
+  SupervisorReviewSchema,
+  FinalQualityReportSchema,
+} from '../schemas/index.js';
+import {
+  SUPERVISOR_SYSTEM_PROMPT,
+  WORKER_SYSTEM_PROMPT,
+  GOAL_SPECIFICATION_PROMPT,
+  TASK_GENERATION_PROMPT,
+  TASK_REVIEW_PROMPT,
+  FINAL_QA_PROMPT,
+} from '../prompts/default-prompts.js';
+import { RunStateMachine } from './state-machine.js';
+import { BudgetExceededError, UserInputRequiredError, TaskRetryExhaustedError } from '../errors/index.js';
+
+export class GoalThreadEngine {
+  /**
+   * @param {Object} params
+   * @param {import('../storage/repository.js').GoalThreadRepository} params.repository
+   * @param {import('../artifacts/manager.js').ArtifactManager} params.artifactManager
+   * @param {import('../providers/factory.js').MockLanguageModel|Object} params.supervisorModel
+   * @param {import('../providers/factory.js').MockLanguageModel|Object} params.workerModel
+   * @param {import('events').EventEmitter} [params.eventEmitter]
+   * @param {Object} [params.limits]
+   */
+  constructor({
+    repository,
+    artifactManager,
+    supervisorModel,
+    workerModel,
+    eventEmitter,
+    limits = {},
+  }) {
+    this.repo = repository;
+    this.artifacts = artifactManager;
+    this.emitter = eventEmitter;
+    this.supervisorModel = supervisorModel;
+    this.workerModel = workerModel;
+
+    this.limits = {
+      maxTasks: limits.maxTasks || 100,
+      maxAttemptsPerTask: limits.maxAttemptsPerTask || 3,
+      maxTotalTokens: limits.maxTotalTokens || 1000000,
+      maxEstimatedCostUsd: limits.maxEstimatedCostUsd || 25,
+    };
+  }
+
+  emit(type, payload) {
+    if (this.repo && payload.runId) {
+      this.repo.recordEvent(payload.runId, type, payload);
+    }
+    if (this.emitter) {
+      this.emitter.emit(type, payload);
+    }
+  }
+
+  /**
+   * Generates mock data for testing when using MockLanguageModel
+   */
+  createMockGenerator(type, extra = {}) {
+    return (prompt) => {
+      const now = new Date().toISOString();
+      if (type === 'goalSpec') {
+        return {
+          goalId: extra.goalId || 'goal_mock',
+          title: 'Autonomous Research Goal',
+          objective: 'Execute high quality systematic research and deliver document',
+          scope: { included: ['Research', 'Drafting'], excluded: ['Manual testing'] },
+          expectedDeliverables: [
+            { id: 'del-1', name: 'Final Report', description: 'Comprehensive markdown report', format: 'markdown', mandatory: true },
+          ],
+          qualityStandards: ['Clear structure', 'Factual accuracy'],
+          completionCriteria: ['All tasks executed', 'Final QA passed'],
+          assumptions: [],
+          risks: [],
+          userInputsRequired: [],
+          proposedPhases: [
+            { phaseId: 'phase-1', title: 'Information Collection', description: 'Collect primary facts', sequence: 1 },
+            { phaseId: 'phase-2', title: 'Synthesis', description: 'Synthesize report sections', sequence: 2 },
+          ],
+        };
+      }
+
+      if (type === 'taskContract') {
+        return {
+          taskId: extra.taskId || `task_${extra.sequence || 1}`,
+          runId: extra.runId || 'run_mock',
+          phaseId: extra.phaseId || 'phase-1',
+          sequence: extra.sequence || 1,
+          title: extra.attemptNumber > 1 ? `Correction: ${extra.title}` : 'Execute Primary Research Task',
+          objective: 'Collect key data and structure findings',
+          context: { goalSummary: 'Execute research goal', acceptedInputs: [] },
+          instructions: ['Gather data', 'Organize deliverables'],
+          constraints: ['No fabrication'],
+          requiredTools: [],
+          permittedTools: ['readFile', 'writeFile'],
+          expectedOutput: { format: 'markdown', artifactNames: ['findings.md'] },
+          evidenceRequirements: ['Source attribution'],
+          acceptanceCriteria: [
+            { criterionId: 'AC-1', description: 'Findings must be structured', weight: 1, mandatory: true },
+          ],
+          maxAttempts: 3,
+          attemptNumber: extra.attemptNumber || 1,
+          timeoutMs: 300000,
+          createdAt: now,
+        };
+      }
+
+      if (type === 'workerResult') {
+        return {
+          taskId: extra.taskId || 'task_1',
+          runId: extra.runId || 'run_mock',
+          status: extra.forceFail ? 'failed' : 'completed',
+          summary: 'Task executed successfully with complete findings.',
+          deliverables: { reportSection: 'Detailed synthesized content for objective.' },
+          evidence: [{ id: 'ev-1', source: 'Internal Knowledge', content: 'Verified data points', relevance: 'High' }],
+          citations: [],
+          assumptions: [],
+          limitations: [],
+          unresolvedQuestions: [],
+          criterionSelfAssessment: [{ criterionId: 'AC-1', status: 'met' }],
+          confidence: 0.95,
+          completedAt: now,
+        };
+      }
+
+      if (type === 'supervisorReview') {
+        return {
+          reviewId: `rev_${crypto.randomUUID().slice(0, 8)}`,
+          taskId: extra.taskId || 'task_1',
+          decision: extra.forceFail ? 'FAIL' : 'PASS',
+          score: extra.forceFail ? 40 : 95,
+          criterionResults: [{ criterionId: 'AC-1', passed: !extra.forceFail, score: 95, comments: 'Well structured' }],
+          strengths: ['Clear report structure'],
+          issues: extra.forceFail ? [{ issueId: 'iss-1', severity: 'major', description: 'Missing detail', remediation: 'Expand' }] : [],
+          missingItems: [],
+          unsupportedClaims: [],
+          inconsistencies: [],
+          taskAccepted: !extra.forceFail,
+          goalComplete: Boolean(extra.isLastTask && !extra.forceFail),
+          reviewSummary: extra.forceFail ? 'Task failed acceptance criteria.' : 'Task passed quality review.',
+        };
+      }
+
+      if (type === 'finalQA') {
+        return {
+          passed: true,
+          checkedCriteria: [{ name: 'Deliverables complete', passed: true, notes: 'Satisfies goal spec' }],
+          missingItems: [],
+          criticalIssues: [],
+          synthesisSummary: 'Overall goal successfully achieved with high quality output.',
+          completedAt: now,
+        };
+      }
+
+      return {};
+    };
+  }
+
+  /**
+   * Initializes and executes goal
+   */
+  async runGoal({ runId, goal, config }) {
+    this.repo.createRun({ id: runId, goal, config });
+    this.emit('GOAL_CREATED', { runId, goal });
+
+    const stateMachine = new RunStateMachine('created');
+    stateMachine.transitionTo('planning');
+    this.repo.updateRunStatus(runId, 'planning', { phase: 'planning', progress: 5 });
+
+    // Step 1: Create Goal Specification
+    const specPrompt = GOAL_SPECIFICATION_PROMPT.replace('{{GOAL}}', goal);
+    const specRes = await generateStructuredOutput({
+      model: this.supervisorModel,
+      schema: GoalSpecificationSchema,
+      prompt: specPrompt,
+      system: SUPERVISOR_SYSTEM_PROMPT,
+      mockGenerator: this.createMockGenerator('goalSpec', { goalId: `spec_${runId}` }),
+    });
+
+    const goalSpec = { ...specRes.object, runId };
+    this.repo.saveGoalSpecification(goalSpec);
+    this.repo.updateRunStatus(runId, 'planning', {
+      tokensUsed: specRes.usage.totalTokens,
+      estimatedCost: specRes.usage.totalTokens * 0.000002,
+    });
+    this.emit('PLAN_CREATED', { runId, spec: goalSpec });
+
+    // Step 2: Execute Plan Loop
+    stateMachine.transitionTo('working');
+    return this.executeLoop(runId, stateMachine);
+  }
+
+  /**
+   * Main Autonomous Execution Loop
+   */
+  async executeLoop(runId, stateMachine) {
+    const run = this.repo.getRun(runId);
+    const goalSpec = this.repo.getGoalSpecification(runId);
+    let history = this.repo.getRunHistory(runId);
+
+    let currentPhaseIndex = 0;
+    let sequence = history.tasks.length + 1;
+    let totalTasksCount = history.tasks.length;
+
+    while (currentPhaseIndex < goalSpec.proposedPhases.length) {
+      const currentPhase = goalSpec.proposedPhases[currentPhaseIndex];
+
+      // Budget check
+      if (totalTasksCount >= this.limits.maxTasks) {
+        throw new BudgetExceededError(`Exceeded maximum task limit of ${this.limits.maxTasks}`);
+      }
+
+      let taskPassed = false;
+      let attemptNumber = 1;
+      let lastReview = null;
+
+      while (!taskPassed && attemptNumber <= this.limits.maxAttemptsPerTask) {
+        const taskId = `task_${runId.slice(0, 6)}_${sequence}`;
+
+        // 1. Supervisor generates Task Contract (Context Compressed per Section 18.3)
+        const compressedHistory = history.tasks
+          .filter((t) => t.status === 'passed')
+          .map((t) => {
+            const res = history.workerResults.find((r) => r.taskId === t.taskId);
+            const summary = res?.data?.summary || 'Task completed successfully.';
+            return `- Task [${t.taskId}]: ${t.title} (Passed) - ${summary}`;
+          })
+          .join('\n');
+
+        const taskPrompt = TASK_GENERATION_PROMPT
+          .replace('{{GOAL_SPEC}}', JSON.stringify({ title: goalSpec.title, objective: goalSpec.objective, completionCriteria: goalSpec.completionCriteria }))
+          .replace('{{COMPLETED_HISTORY}}', compressedHistory || 'None yet')
+          .replace('{{CURRENT_PHASE}}', JSON.stringify({ phaseId: currentPhase.phaseId, title: currentPhase.title, description: currentPhase.description }));
+
+        const taskRes = await generateStructuredOutput({
+          model: this.supervisorModel,
+          schema: TaskContractSchema,
+          prompt: taskPrompt,
+          system: SUPERVISOR_SYSTEM_PROMPT,
+          mockGenerator: this.createMockGenerator('taskContract', {
+            taskId,
+            runId,
+            phaseId: currentPhase.phaseId,
+            sequence,
+            attemptNumber,
+          }),
+        });
+
+        const taskContract = {
+          ...taskRes.object,
+          taskId,
+          runId,
+          phaseId: currentPhase.phaseId,
+          sequence,
+          attemptNumber,
+        };
+
+        this.repo.saveTask(taskContract);
+        this.emit('TASK_ASSIGNED', { runId, task: taskContract });
+
+        // 2. Worker executes Task Contract
+        this.emit('WORKER_STARTED', { runId, taskId });
+        const workerPrompt = `Execute assigned task:\n${JSON.stringify(taskContract, null, 2)}`;
+        const workerRes = await generateStructuredOutput({
+          model: this.workerModel,
+          schema: WorkerResultSchema,
+          prompt: workerPrompt,
+          system: WORKER_SYSTEM_PROMPT,
+          mockGenerator: this.createMockGenerator('workerResult', {
+            taskId,
+            runId,
+            forceFail: Boolean(attemptNumber === 1 && process.env.TEST_SIMULATE_FAIL),
+          }),
+        });
+
+        const workerResult = { ...workerRes.object, taskId, runId };
+        this.repo.saveWorkerResult(workerResult);
+        this.emit('WORKER_COMPLETED', { runId, result: workerResult });
+
+        // 3. Supervisor reviews Worker Result
+        this.emit('SUPERVISOR_REVIEW_STARTED', { runId, taskId });
+        const reviewPrompt = TASK_REVIEW_PROMPT
+          .replace('{{TASK_CONTRACT}}', JSON.stringify(taskContract))
+          .replace('{{WORKER_RESULT}}', JSON.stringify(workerResult));
+
+        const isLastTask = Boolean(
+          currentPhaseIndex === goalSpec.proposedPhases.length - 1 && attemptNumber === 1
+        );
+
+        const reviewRes = await generateStructuredOutput({
+          model: this.supervisorModel,
+          schema: SupervisorReviewSchema,
+          prompt: reviewPrompt,
+          system: SUPERVISOR_SYSTEM_PROMPT,
+          mockGenerator: this.createMockGenerator('supervisorReview', {
+            taskId,
+            runId,
+            forceFail: workerResult.status === 'failed',
+            isLastTask,
+          }),
+        });
+
+        lastReview = { ...reviewRes.object, taskId };
+        this.repo.saveSupervisorReview(lastReview, runId);
+
+        // Update token & progress metrics
+        const totalTokens = taskRes.usage.totalTokens + workerRes.usage.totalTokens + reviewRes.usage.totalTokens;
+        const progress = Math.min(95, Math.round(((currentPhaseIndex + 1) / goalSpec.proposedPhases.length) * 100));
+        this.repo.updateRunStatus(runId, 'working', {
+          phase: currentPhase.title,
+          progress,
+          tokensUsed: totalTokens,
+          estimatedCost: totalTokens * 0.000002,
+        });
+
+        if (lastReview.decision === 'PASS') {
+          taskPassed = true;
+          this.emit('TASK_PASSED', { runId, taskId, review: lastReview });
+        } else if (lastReview.decision === 'NEEDS_USER_INPUT') {
+          stateMachine.transitionTo('waiting_for_user');
+          this.repo.updateRunStatus(runId, 'waiting_for_user');
+          this.emit('USER_INPUT_REQUIRED', {
+            runId,
+            question: lastReview.reviewSummary || 'Supervisor requires user input to proceed.',
+          });
+          throw new UserInputRequiredError(lastReview.reviewSummary);
+        } else {
+          attemptNumber++;
+          this.emit('TASK_FAILED', { runId, taskId, review: lastReview });
+          if (attemptNumber <= this.limits.maxAttemptsPerTask) {
+            this.emit('TASK_RETRYING', { runId, taskId, attemptNumber });
+          }
+        }
+      }
+
+      if (!taskPassed) {
+        this.repo.updateRunStatus(runId, 'failed');
+        throw new TaskRetryExhaustedError(`Task ${currentPhase.phaseId} failed after ${this.limits.maxAttemptsPerTask} attempts.`);
+      }
+
+      sequence++;
+      totalTasksCount++;
+      currentPhaseIndex++;
+      history = this.repo.getRunHistory(runId);
+
+      if (lastReview && lastReview.goalComplete) {
+        break;
+      }
+    }
+
+    // Step 3: Final Quality Assurance Gate & Finalization
+    return this.finalizeGoal(runId, stateMachine);
+  }
+
+  /**
+   * Final QA Gate and Deliverable Export
+   */
+  async finalizeGoal(runId, stateMachine) {
+    if (stateMachine.getStatus() !== 'finalizing') {
+      stateMachine.transitionTo('finalizing');
+    }
+    this.repo.updateRunStatus(runId, 'finalizing', { progress: 98 });
+    this.emit('FINAL_QA_STARTED', { runId });
+
+    const history = this.repo.getRunHistory(runId);
+    const compressedDeliverables = history.tasks
+      .filter((t) => t.status === 'passed')
+      .map((t) => {
+        const res = history.workerResults.find((r) => r.taskId === t.taskId);
+        return `- Deliverable [${t.taskId}]: ${t.title}\n  Summary: ${res?.data?.summary || 'Completed'}`;
+      })
+      .join('\n\n');
+
+    const qaPrompt = FINAL_QA_PROMPT
+      .replace('{{GOAL_SPEC}}', JSON.stringify({ title: history.goalSpec?.title, objective: history.goalSpec?.objective }))
+      .replace('{{ALL_DELIVERABLES}}', compressedDeliverables);
+
+    const qaRes = await generateStructuredOutput({
+      model: this.supervisorModel,
+      schema: FinalQualityReportSchema,
+      prompt: qaPrompt,
+      system: SUPERVISOR_SYSTEM_PROMPT,
+      mockGenerator: this.createMockGenerator('finalQA'),
+    });
+
+    const qaReport = qaRes.object;
+    const finalArtifact = this.artifacts.exportFinalBundle(runId, history);
+
+    this.repo.saveArtifact({
+      artifactId: finalArtifact.artifactId,
+      runId,
+      name: finalArtifact.name,
+      path: finalArtifact.path,
+      checksum: finalArtifact.checksum,
+    });
+
+    stateMachine.transitionTo('completed');
+    this.repo.updateRunStatus(runId, 'completed', { progress: 100 });
+
+    this.emit('GOAL_COMPLETED', {
+      runId,
+      qaReport,
+      artifactPath: finalArtifact.path,
+    });
+
+    return {
+      runId,
+      status: 'completed',
+      qaReport,
+      artifactPath: finalArtifact.path,
+      history,
+    };
+  }
+}
