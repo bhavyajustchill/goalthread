@@ -1,122 +1,175 @@
-import fs from 'fs';
-import path from 'path';
-import { Command } from 'commander';
-import chalk from 'chalk';
-import ora from 'ora';
-import dotenv from 'dotenv';
-import { GoalThread } from '../client/GoalThread.js';
-import { openDatabase } from '../storage/db.js';
+import fs from "fs";
+import path from "path";
+import { Command } from "commander";
+import chalk from "chalk";
+import ora from "ora";
+import dotenv from "dotenv";
+import { GoalThread } from "../client/GoalThread.js";
+import { openDatabase } from "../storage/db.js";
 
 dotenv.config();
 
 const program = new Command();
 
 program
-  .name('goalthread')
-  .description('Autonomous Supervisor-Worker AI SDK & CLI')
-  .version('1.0.0');
+  .name("goalthread")
+  .description("Autonomous Supervisor-Worker AI SDK & CLI")
+  .version("1.0.0");
 
 // 1. init command
 program
-  .command('init')
-  .description('Initialize GoalThread environment configuration and directories')
+  .command("init")
+  .description("Initialize GoalThread environment configuration and directories")
   .action(async () => {
-    console.log(chalk.blue.bold('\nInitializing GoalThread Workspace...\n'));
-    const dir = './.goalthread';
+    console.log(chalk.blue.bold("\nInitializing GoalThread Workspace...\n"));
+    const dir = "./.goalthread";
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    if (!fs.existsSync('./goalthread-runs')) {
-      fs.mkdirSync('./goalthread-runs', { recursive: true });
+    if (!fs.existsSync("./goalthread-runs")) {
+      fs.mkdirSync("./goalthread-runs", { recursive: true });
     }
 
-    if (!fs.existsSync('.env')) {
-      const exampleEnv = fs.readFileSync(path.resolve('.env.example'), 'utf8');
-      fs.writeFileSync('.env', exampleEnv, 'utf8');
-      console.log(chalk.green('✓ Created .env file from .env.example'));
+    if (!fs.existsSync(".env")) {
+      const exampleEnv = fs.readFileSync(path.resolve(".env.example"), "utf8");
+      fs.writeFileSync(".env", exampleEnv, "utf8");
+      console.log(chalk.green("✓ Created .env file from .env.example"));
     }
 
-    console.log(chalk.green('✓ GoalThread workspace initialized successfully!\n'));
+    console.log(chalk.green("✓ GoalThread workspace initialized successfully!\n"));
   });
 
 // 2. run command
 program
-  .command('run <goal>')
-  .description('Execute an autonomous goal using Supervisor and Worker threads')
-  .option('-s, --supervisor-model <model>', 'Supervisor model override')
-  .option('-w, --worker-model <model>', 'Worker model override')
-  .option('--supervisor-provider <provider>', 'Supervisor provider override (groq or openrouter)')
-  .option('-m, --max-tasks <number>', 'Maximum tasks limit', parseInt, 100)
-  .option('-r, --max-retries <number>', 'Maximum retry attempts per task (default from GOALTHREAD_MAX_RETRIES env or 2)', parseInt, parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10))
-  .option('--mock', 'Run in offline mock mode for testing')
+  .command("run <goal>")
+  .description("Execute an autonomous goal using Supervisor and Worker threads")
+  .option("-s, --supervisor-model <model>", "Supervisor model override")
+  .option("-w, --worker-model <model>", "Worker model override")
+  .option(
+    "--supervisor-provider <provider>",
+    "Supervisor provider override (groq, openrouter, openai, custom)",
+  )
+  .option("--supervisor-base-url <url>", "Supervisor base URL for custom provider")
+  .option(
+    "--worker-provider <provider>",
+    "Worker provider override (groq, openrouter, openai, custom)",
+  )
+  .option("--worker-base-url <url>", "Worker base URL for custom provider")
+  .option("-m, --max-tasks <number>", "Maximum tasks limit", parseInt, 100)
+  .option(
+    "-r, --max-retries <number>",
+    "Maximum retry attempts per task (default from GOALTHREAD_MAX_RETRIES env or 2)",
+    parseInt,
+    parseInt(process.env.GOALTHREAD_MAX_RETRIES || "2", 10),
+  )
+  .option("--mock", "Run in offline mock mode for testing")
   .action(async (goal, options) => {
-    console.log(chalk.bold.cyan(`\n🚀 Submitting Goal:`), goal, '\n');
-    console.log(chalk.gray('Supervisor planning goal specification...'));
+    console.log(chalk.bold.cyan(`\n🚀 Submitting Goal:`), goal, "\n");
+    console.log(chalk.gray("Supervisor planning goal specification..."));
 
     const client = new GoalThread({
       supervisor: {
-        provider: options.mock ? 'mock' : (options.supervisorProvider || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter'),
-        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
+        ...(options.mock ? { provider: "mock" } : {}),
+        ...(options.supervisorProvider ? { provider: options.supervisorProvider } : {}),
+        ...(options.supervisorModel ? { model: options.supervisorModel } : {}),
+        ...(options.supervisorBaseUrl ? { baseURL: options.supervisorBaseUrl } : {}),
       },
       worker: {
-        provider: options.mock ? 'mock' : 'openrouter',
-        model: options.workerModel || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        ...(options.mock ? { provider: "mock" } : {}),
+        ...(options.workerProvider ? { provider: options.workerProvider } : {}),
+        ...(options.workerModel ? { model: options.workerModel } : {}),
+        ...(options.workerBaseUrl ? { baseURL: options.workerBaseUrl } : {}),
       },
     });
 
-    client.on('GOAL_CREATED', (evt) => {
+    client.on("GOAL_CREATED", (evt) => {
       console.log(chalk.bold.yellow(`📌 Run ID:`), evt.runId);
     });
 
-    client.on('PLAN_CREATED', (evt) => {
+    client.on("PLAN_CREATED", (evt) => {
       console.log(chalk.green.bold(`\n✔ Plan created: "${evt.spec.title}"`));
-      console.log(chalk.gray(`   Phases: ${evt.spec.proposedPhases.map((p) => p.title).join(' -> ')}\n`));
+      console.log(
+        chalk.gray(`   Phases: ${evt.spec.proposedPhases.map((p) => p.title).join(" -> ")}\n`),
+      );
     });
 
-    client.on('TASK_ASSIGNED', (evt) => {
+    client.on("TASK_ASSIGNED", (evt) => {
       console.log(chalk.cyan(`⚙ Task assigned [${evt.task.taskId}]: ${evt.task.title}`));
     });
 
-    client.on('WORKER_COMPLETED', (evt) => {
-      console.log(chalk.blue(`📝 Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`));
+    client.on("WORKER_COMPLETED", (evt) => {
+      console.log(
+        chalk.blue(`📝 Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`),
+      );
     });
 
-    client.on('TASK_PASSED', (evt) => {
+    client.on("TASK_PASSED", (evt) => {
       if (evt.isBestCandidate) {
-        console.log(chalk.yellow.bold(`⭐ Selected Best Candidate Output for [${evt.taskId}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`));
+        console.log(
+          chalk.yellow.bold(
+            `⭐ Selected Best Candidate Output for [${evt.taskId}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`,
+          ),
+        );
       } else {
-        console.log(chalk.green.bold(`✔ Task passed [${evt.taskId}] -> Status: ${evt.outcomeStatus || 'PASS'} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`));
+        console.log(
+          chalk.green.bold(
+            `✔ Task passed [${evt.taskId}] -> Status: ${evt.outcomeStatus || "PASS"} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`,
+          ),
+        );
       }
     });
 
-    client.on('TASK_FAILED', (evt) => {
-      const attemptsInfo = evt.currentAttempt && evt.maxAttempts ? `Attempt ${evt.currentAttempt}/${evt.maxAttempts}` : 'Attempt';
-      console.log(chalk.yellow(`⚠ ${attemptsInfo} for [${evt.taskId}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`));
+    client.on("TASK_FAILED", (evt) => {
+      const attemptsInfo =
+        evt.currentAttempt && evt.maxAttempts
+          ? `Attempt ${evt.currentAttempt}/${evt.maxAttempts}`
+          : "Attempt";
+      console.log(
+        chalk.yellow(
+          `⚠ ${attemptsInfo} for [${evt.taskId}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`,
+        ),
+      );
       if (evt.review.reviewSummary || evt.review.feedback) {
-        console.log(chalk.yellow(`   Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`));
+        console.log(
+          chalk.yellow(
+            `   Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`,
+          ),
+        );
       }
     });
 
-    client.on('BEST_CANDIDATE_SELECTED', (evt) => {
-      console.log(chalk.yellow.bold(`\n🏆 Max retries (${evt.totalAttempts}) reached. Evaluated all outputs -> Selected Best Candidate Attempt ${evt.attemptNumber} [Status: ${evt.outcomeStatus}, Score: ${evt.scorePercentage}]\n`));
+    client.on("BEST_CANDIDATE_SELECTED", (evt) => {
+      console.log(
+        chalk.yellow.bold(
+          `\n🏆 Max retries (${evt.totalAttempts}) reached. Evaluated all outputs -> Selected Best Candidate Attempt ${evt.attemptNumber} [Status: ${evt.outcomeStatus}, Score: ${evt.scorePercentage}]\n`,
+        ),
+      );
     });
 
-    client.on('INVALID_JSON_FALLBACK', (evt) => {
-      console.log(chalk.yellow.bold(`\n⚠️ Invalid JSON output on attempt ${evt.attemptNumber}. Automatically falling back to best previous iteration output with Supervisor review!\n`));
+    client.on("INVALID_JSON_FALLBACK", (evt) => {
+      console.log(
+        chalk.yellow.bold(
+          `\n⚠️ Invalid JSON output on attempt ${evt.attemptNumber}. Automatically falling back to best previous iteration output with Supervisor review!\n`,
+        ),
+      );
     });
 
-    client.on('TASK_RETRYING', (evt) => {
-      const maxInfo = evt.maxAttempts ? `/${evt.maxAttempts}` : '';
-      console.log(chalk.magenta(`🔄 Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`));
+    client.on("TASK_RETRYING", (evt) => {
+      const maxInfo = evt.maxAttempts ? `/${evt.maxAttempts}` : "";
+      console.log(
+        chalk.magenta(
+          `🔄 Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`,
+        ),
+      );
     });
 
-    client.on('FINAL_QA_STARTED', () => {
+    client.on("FINAL_QA_STARTED", () => {
       console.log(chalk.cyan(`🔍 Supervisor executing final quality gate verification...`));
     });
 
-    client.on('GOAL_COMPLETED', (evt) => {
-      console.log(chalk.green.bold('\n🎉 Goal Completed Successfully!'));
-      console.log(chalk.cyan(`Deliverable generated at:`), evt.artifactPath, '\n');
+    client.on("GOAL_COMPLETED", (evt) => {
+      console.log(chalk.green.bold("\n🎉 Goal Completed Successfully!"));
+      console.log(chalk.cyan(`Deliverable generated at:`), evt.artifactPath, "\n");
     });
 
     try {
@@ -124,7 +177,8 @@ program
         goal,
         limits: {
           maxTasks: options.maxTasks,
-          maxAttemptsPerTask: options.maxRetries || parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10),
+          maxAttemptsPerTask:
+            options.maxRetries || parseInt(process.env.GOALTHREAD_MAX_RETRIES || "2", 10),
         },
       });
     } catch (error) {
@@ -135,70 +189,118 @@ program
 
 // 3. resume command
 program
-  .command('resume <runId>')
-  .description('Resume an interrupted run from saved SQLite database state')
-  .option('-s, --supervisor-model <model>', 'Supervisor model override')
-  .option('-w, --worker-model <model>', 'Worker model override')
-  .option('--supervisor-provider <provider>', 'Supervisor provider override (groq or openrouter)')
-  .option('-r, --max-retries <number>', 'Maximum retry attempts per task', parseInt, parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10))
-  .option('--mock', 'Use mock models for resume')
+  .command("resume <runId>")
+  .description("Resume an interrupted run from saved SQLite database state")
+  .option("-s, --supervisor-model <model>", "Supervisor model override")
+  .option("-w, --worker-model <model>", "Worker model override")
+  .option(
+    "--supervisor-provider <provider>",
+    "Supervisor provider override (groq, openrouter, openai, custom)",
+  )
+  .option("--supervisor-base-url <url>", "Supervisor base URL for custom provider")
+  .option(
+    "--worker-provider <provider>",
+    "Worker provider override (groq, openrouter, openai, custom)",
+  )
+  .option("--worker-base-url <url>", "Worker base URL for custom provider")
+  .option(
+    "-r, --max-retries <number>",
+    "Maximum retry attempts per task",
+    parseInt,
+    parseInt(process.env.GOALTHREAD_MAX_RETRIES || "2", 10),
+  )
+  .option("--mock", "Use mock models for resume")
   .action(async (runId, options) => {
-    console.log(chalk.cyan(`\nResuming Run:`), runId, '\n');
+    console.log(chalk.cyan(`\nResuming Run:`), runId, "\n");
 
     const client = new GoalThread({
       supervisor: {
-        provider: options.mock ? 'mock' : (options.supervisorProvider || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter'),
-        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
+        ...(options.mock ? { provider: "mock" } : {}),
+        ...(options.supervisorProvider ? { provider: options.supervisorProvider } : {}),
+        ...(options.supervisorModel ? { model: options.supervisorModel } : {}),
+        ...(options.supervisorBaseUrl ? { baseURL: options.supervisorBaseUrl } : {}),
       },
       worker: {
-        provider: options.mock ? 'mock' : 'openrouter',
-        model: options.workerModel || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        ...(options.mock ? { provider: "mock" } : {}),
+        ...(options.workerProvider ? { provider: options.workerProvider } : {}),
+        ...(options.workerModel ? { model: options.workerModel } : {}),
+        ...(options.workerBaseUrl ? { baseURL: options.workerBaseUrl } : {}),
       },
     });
 
-    client.on('TASK_ASSIGNED', (evt) => {
+    client.on("TASK_ASSIGNED", (evt) => {
       console.log(chalk.cyan(`⚙ Task assigned [${evt.task.taskId}]: ${evt.task.title}`));
     });
 
-    client.on('WORKER_COMPLETED', (evt) => {
-      console.log(chalk.blue(`📝 Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`));
+    client.on("WORKER_COMPLETED", (evt) => {
+      console.log(
+        chalk.blue(`📝 Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`),
+      );
     });
 
-    client.on('TASK_PASSED', (evt) => {
+    client.on("TASK_PASSED", (evt) => {
       if (evt.isBestCandidate) {
-        console.log(chalk.yellow.bold(`⭐ Selected Best Candidate Output for [${evt.taskId}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`));
+        console.log(
+          chalk.yellow.bold(
+            `⭐ Selected Best Candidate Output for [${evt.taskId}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`,
+          ),
+        );
       } else {
-        console.log(chalk.green.bold(`✔ Task passed [${evt.taskId}] -> Status: ${evt.outcomeStatus || 'PASS'} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`));
+        console.log(
+          chalk.green.bold(
+            `✔ Task passed [${evt.taskId}] -> Status: ${evt.outcomeStatus || "PASS"} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`,
+          ),
+        );
       }
     });
 
-    client.on('TASK_FAILED', (evt) => {
-      const attemptsInfo = evt.currentAttempt && evt.maxAttempts ? `Attempt ${evt.currentAttempt}/${evt.maxAttempts}` : 'Attempt';
-      console.log(chalk.yellow(`⚠ ${attemptsInfo} for [${evt.taskId}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`));
+    client.on("TASK_FAILED", (evt) => {
+      const attemptsInfo =
+        evt.currentAttempt && evt.maxAttempts
+          ? `Attempt ${evt.currentAttempt}/${evt.maxAttempts}`
+          : "Attempt";
+      console.log(
+        chalk.yellow(
+          `⚠ ${attemptsInfo} for [${evt.taskId}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`,
+        ),
+      );
       if (evt.review.reviewSummary || evt.review.feedback) {
-        console.log(chalk.yellow(`   Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`));
+        console.log(
+          chalk.yellow(
+            `   Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`,
+          ),
+        );
       }
     });
 
-    client.on('BEST_CANDIDATE_SELECTED', (evt) => {
-      console.log(chalk.yellow.bold(`\n🏆 Max retries (${evt.totalAttempts}) reached. Evaluated all outputs -> Selected Best Candidate Attempt ${evt.attemptNumber} [Status: ${evt.outcomeStatus}, Score: ${evt.scorePercentage}]\n`));
+    client.on("BEST_CANDIDATE_SELECTED", (evt) => {
+      console.log(
+        chalk.yellow.bold(
+          `\n🏆 Max retries (${evt.totalAttempts}) reached. Evaluated all outputs -> Selected Best Candidate Attempt ${evt.attemptNumber} [Status: ${evt.outcomeStatus}, Score: ${evt.scorePercentage}]\n`,
+        ),
+      );
     });
 
-    client.on('TASK_RETRYING', (evt) => {
-      const maxInfo = evt.maxAttempts ? `/${evt.maxAttempts}` : '';
-      console.log(chalk.magenta(`🔄 Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`));
+    client.on("TASK_RETRYING", (evt) => {
+      const maxInfo = evt.maxAttempts ? `/${evt.maxAttempts}` : "";
+      console.log(
+        chalk.magenta(
+          `🔄 Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`,
+        ),
+      );
     });
 
-    client.on('GOAL_COMPLETED', (evt) => {
-      console.log(chalk.green.bold('\n🎉 Goal Resumed & Completed Successfully!'));
-      console.log(chalk.cyan(`Deliverable generated at:`), evt.artifactPath, '\n');
+    client.on("GOAL_COMPLETED", (evt) => {
+      console.log(chalk.green.bold("\n🎉 Goal Resumed & Completed Successfully!"));
+      console.log(chalk.cyan(`Deliverable generated at:`), evt.artifactPath, "\n");
     });
 
     try {
       await client.resume({
         runId,
         limits: {
-          maxAttemptsPerTask: options.maxRetries || parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10),
+          maxAttemptsPerTask:
+            options.maxRetries || parseInt(process.env.GOALTHREAD_MAX_RETRIES || "2", 10),
         },
       });
     } catch (error) {
@@ -209,8 +311,8 @@ program
 
 // 4. status command
 program
-  .command('status <runId>')
-  .description('Inspect current progress and token metrics of a run')
+  .command("status <runId>")
+  .description("Inspect current progress and token metrics of a run")
   .action(async (runId) => {
     try {
       const client = new GoalThread();
@@ -225,9 +327,9 @@ program
       console.log(chalk.gray(`----------------------------------------`));
       console.log(`Goal:             ${history.run.goal}`);
       console.log(`Status:           ${history.run.status}`);
-      console.log(`Current Phase:    ${history.run.phase || 'N/A'}`);
+      console.log(`Current Phase:    ${history.run.phase || "N/A"}`);
       console.log(`Progress:         ${history.run.progress}%`);
-      console.log(`Completed Tasks:  ${history.tasks.filter((t) => t.status === 'passed').length}`);
+      console.log(`Completed Tasks:  ${history.tasks.filter((t) => t.status === "passed").length}`);
       console.log(`Tokens Used:      ${history.run.tokens_used}`);
       console.log(`Estimated Cost:   $${(history.run.estimated_cost || 0).toFixed(4)}`);
       console.log(chalk.gray(`----------------------------------------\n`));
@@ -238,8 +340,8 @@ program
 
 // 5. history command
 program
-  .command('history <runId>')
-  .description('Display detailed task and review timeline for a run')
+  .command("history <runId>")
+  .description("Display detailed task and review timeline for a run")
   .action(async (runId) => {
     try {
       const client = new GoalThread();
@@ -259,7 +361,7 @@ program
           console.log(`     Summary: ${review.data.reviewSummary}`);
         }
       });
-      console.log('\n');
+      console.log("\n");
     } catch (err) {
       console.log(chalk.red(`Failed to fetch history: ${err.message}`));
     }
@@ -267,28 +369,32 @@ program
 
 // 6. list command
 program
-  .command('list')
-  .alias('ls')
-  .description('List all goal execution runs stored in the SQLite database')
+  .command("list")
+  .alias("ls")
+  .description("List all goal execution runs stored in the SQLite database")
   .action(async () => {
     try {
       const client = new GoalThread();
       const runs = await client.listRuns();
 
       if (!runs || runs.length === 0) {
-        console.log(chalk.yellow('\nNo runs found in database.\n'));
+        console.log(chalk.yellow("\nNo runs found in database.\n"));
         return;
       }
 
       console.log(chalk.bold.cyan(`\nStored GoalThread Runs (${runs.length}):\n`));
       runs.forEach((r) => {
         const date = new Date(r.created_at).toLocaleString();
-        console.log(`• Run ID: ${chalk.bold.yellow(r.id)} [${r.status.toUpperCase()}] (${r.progress}%)`);
+        console.log(
+          `• Run ID: ${chalk.bold.yellow(r.id)} [${r.status.toUpperCase()}] (${r.progress}%)`,
+        );
         console.log(`  Goal: ${r.goal}`);
-        console.log(`  Created: ${date} | Tokens: ${r.tokens_used} | Cost: $${(r.estimated_cost || 0).toFixed(4)}`);
+        console.log(
+          `  Created: ${date} | Tokens: ${r.tokens_used} | Cost: $${(r.estimated_cost || 0).toFixed(4)}`,
+        );
         console.log(chalk.gray(`  ---------------------------------------------------------`));
       });
-      console.log('\n');
+      console.log("\n");
     } catch (err) {
       console.log(chalk.red(`Failed to list runs: ${err.message}`));
     }
@@ -296,8 +402,8 @@ program
 
 // 7. export command
 program
-  .command('export <runId>')
-  .description('Export final deliverable markdown and json files for a run')
+  .command("export <runId>")
+  .description("Export final deliverable markdown and json files for a run")
   .action(async (runId) => {
     try {
       const client = new GoalThread();
@@ -310,7 +416,7 @@ program
 
       const meta = client.artifactManager.exportFinalBundle(runId, history);
       console.log(chalk.green.bold(`\n✓ Deliverables exported successfully!`));
-      console.log(chalk.cyan(`Deliverable path:`), meta.path, '\n');
+      console.log(chalk.cyan(`Deliverable path:`), meta.path, "\n");
     } catch (err) {
       console.log(chalk.red(`Failed to export deliverables: ${err.message}`));
     }
@@ -318,10 +424,10 @@ program
 
 // 8. clean command
 program
-  .command('clean [runId]')
-  .alias('clear')
-  .description('Clear run history from SQLite database and delete generated output artifacts')
-  .option('-a, --all', 'Delete all runs and reset workspace output folder')
+  .command("clean [runId]")
+  .alias("clear")
+  .description("Clear run history from SQLite database and delete generated output artifacts")
+  .option("-a, --all", "Delete all runs and reset workspace output folder")
   .action(async (runId, options) => {
     try {
       const client = new GoalThread();
@@ -331,7 +437,9 @@ program
         if (fs.existsSync(targetDir)) {
           fs.rmSync(targetDir, { recursive: true, force: true });
         }
-        console.log(chalk.green(`\n✓ Successfully deleted history and artifacts for run: ${runId}\n`));
+        console.log(
+          chalk.green(`\n✓ Successfully deleted history and artifacts for run: ${runId}\n`),
+        );
       } else {
         await client.clearHistory();
         const runsDir = client.config.artifacts.directory;
@@ -339,7 +447,11 @@ program
           fs.rmSync(runsDir, { recursive: true, force: true });
           fs.mkdirSync(runsDir, { recursive: true });
         }
-        console.log(chalk.green('\n✓ Successfully cleared all run history from database and artifacts folder!\n'));
+        console.log(
+          chalk.green(
+            "\n✓ Successfully cleared all run history from database and artifacts folder!\n",
+          ),
+        );
       }
     } catch (err) {
       console.log(chalk.red(`Failed to clean history: ${err.message}`));
@@ -348,39 +460,70 @@ program
 
 // 6. doctor command
 program
-  .command('doctor')
-  .description('Validate GoalThread configuration, API keys, database, and permissions')
+  .command("doctor")
+  .description("Validate GoalThread configuration, API keys, database, and permissions")
   .action(async () => {
-    console.log(chalk.bold.magenta('\n🩺 Running GoalThread Doctor Checks...\n'));
+    console.log(chalk.bold.magenta("\n🩺 Running GoalThread Doctor Checks...\n"));
 
     console.log(`Node.js Version: ${process.version} (OK)`);
 
+    const client = new GoalThread();
+    console.log(
+      chalk.cyan(`Supervisor Config:`),
+      `Provider: ${client.config.supervisor.provider} | Model: ${client.config.supervisor.model}${client.config.supervisor.baseURL ? ` | BaseURL: ${client.config.supervisor.baseURL}` : ""}`,
+    );
+    console.log(
+      chalk.cyan(`Worker Config:    `),
+      `Provider: ${client.config.worker.provider} | Model: ${client.config.worker.model}${client.config.worker.baseURL ? ` | BaseURL: ${client.config.worker.baseURL}` : ""}`,
+    );
+
     const groqKey = process.env.GROQ_API_KEY;
     if (groqKey) {
-      console.log(chalk.green('✓ Groq API Key detected'));
-    } else {
-      console.log(chalk.yellow('⚠ GROQ_API_KEY is missing in environment'));
+      console.log(chalk.green("✓ Groq API Key detected"));
     }
 
     const openRouterKey = process.env.OPENROUTER_API_KEY;
     if (openRouterKey) {
-      console.log(chalk.green('✓ OpenRouter API Key detected'));
-    } else {
-      console.log(chalk.yellow('⚠ OPENROUTER_API_KEY is missing in environment'));
+      console.log(chalk.green("✓ OpenRouter API Key detected"));
+    }
+
+    if (process.env.SUPERVISOR_API_KEY || process.env.WORKER_API_KEY) {
+      console.log(chalk.green("✓ Dedicated Supervisor/Worker API Key detected"));
+    }
+
+    if (client.config.supervisor.baseURL) {
+      try {
+        const url = `${client.config.supervisor.baseURL.replace(/\/$/, "")}/models`;
+        const res = await fetch(url);
+        if (res.ok) {
+          console.log(
+            chalk.green(`✓ Custom BaseURL reachable: ${client.config.supervisor.baseURL}`),
+          );
+        } else {
+          console.log(chalk.yellow(`⚠ Custom BaseURL responded with status ${res.status}: ${url}`));
+        }
+      } catch (err) {
+        console.log(
+          chalk.red(
+            `✕ Custom BaseURL connection failed (${client.config.supervisor.baseURL}): ${err.message}`,
+          ),
+        );
+      }
     }
 
     try {
-      const dbContext = await openDatabase('./.goalthread/doctor-test.db');
-      console.log(chalk.green('✓ SQLite database read/write access functional'));
+      const dbContext = await openDatabase("./.goalthread/doctor-test.db");
+      console.log(chalk.green("✓ SQLite database read/write access functional"));
       dbContext.db.close();
-      if (fs.existsSync('./.goalthread/doctor-test.db')) {
-        fs.unlinkSync('./.goalthread/doctor-test.db');
+      if (fs.existsSync("./.goalthread/doctor-test.db")) {
+        fs.unlinkSync("./.goalthread/doctor-test.db");
       }
     } catch (e) {
       console.log(chalk.red(`✕ SQLite database error: ${e.message}`));
     }
 
-    console.log(chalk.green('\nDoctor verification finished!\n'));
+    console.log(chalk.green("\nDoctor verification finished!\n"));
   });
 
 program.parse(process.argv);
+

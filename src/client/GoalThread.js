@@ -24,14 +24,16 @@ export class GoalThread extends EventEmitter {
 
     this.config = {
       supervisor: {
-        provider: config.supervisor?.provider || 'openrouter',
-        model: config.supervisor?.model || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
-        apiKey: config.supervisor?.apiKey || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY,
+        provider: config.supervisor?.provider || process.env.SUPERVISOR_PROVIDER || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter',
+        model: config.supervisor?.model || config.supervisor?.modelId || process.env.SUPERVISOR_MODEL || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
+        apiKey: config.supervisor?.apiKey || process.env.SUPERVISOR_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
+        baseURL: config.supervisor?.baseURL || config.supervisor?.baseUrl || process.env.SUPERVISOR_BASE_URL || process.env.CUSTOM_BASE_URL,
       },
       worker: {
-        provider: config.worker?.provider || 'openrouter',
-        model: config.worker?.model || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
-        apiKey: config.worker?.apiKey || process.env.OPENROUTER_API_KEY,
+        provider: config.worker?.provider || process.env.WORKER_PROVIDER || process.env.OPENROUTER_WORKER_PROVIDER || 'openrouter',
+        model: config.worker?.model || config.worker?.modelId || process.env.WORKER_MODEL || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        apiKey: config.worker?.apiKey || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
+        baseURL: config.worker?.baseURL || config.worker?.baseUrl || process.env.WORKER_BASE_URL || process.env.CUSTOM_BASE_URL,
       },
       storage: {
         driver: config.storage?.driver || 'sqlite',

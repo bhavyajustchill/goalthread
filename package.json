@@ -1,6 +1,6 @@
 {
   "name": "@bhavyajustchill/goalthread",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Autonomous Supervisor-Worker SDK and CLI for complex AI goals using OpenRouter",
   "main": "src/index.js",
   "type": "module",

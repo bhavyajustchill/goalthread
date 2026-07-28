@@ -152,16 +152,58 @@ export class ArtifactManager {
     let md = `# Execution Summary - Run ${history.run?.id}\n\n`;
     md += `- **Goal:** ${history.run?.goal}\n`;
     md += `- **Status:** ${history.run?.status}\n`;
-    md += `- **Total Tasks Executed:** ${history.tasks.length}\n`;
+    md += `- **Total Tasks Executed:** ${history.tasks?.length || 0}\n`;
     md += `- **Tokens Used:** ${history.run?.tokens_used || 0}\n`;
     md += `- **Estimated Cost:** $${(history.run?.estimated_cost || 0).toFixed(4)}\n\n`;
 
-    md += `## Task Log\n`;
-    history.tasks.forEach((t) => {
-      const taskId = t.taskId || t.task_id;
-      const rev = history.supervisorReviews.find((r) => r.taskId === taskId || r.task_id === taskId);
-      md += `- [${t.status.toUpperCase()}] **${taskId}**: ${t.title} (Decision: ${rev?.data?.decision || 'N/A'})\n`;
-    });
+    md += `---\n\n`;
+    md += `## 📋 Task & Attempt Audit Trail\n\n`;
+
+    if (history.tasks && history.tasks.length > 0) {
+      history.tasks.forEach((t) => {
+        const taskId = t.taskId || t.task_id;
+        const taskData = t.data || t;
+        md += `### Task: ${t.title || taskId} (\`${taskId}\`)\n`;
+        md += `- **Status:** ${t.status || 'completed'}\n`;
+        md += `- **Phase:** ${t.phase_id || t.phaseId || 'phase_1'}\n`;
+        md += `- **Objective:** ${taskData.objective || t.title}\n\n`;
+
+        // Find all reviews associated with this task
+        const taskReviews = (history.supervisorReviews || []).filter(
+          (r) => r.taskId === taskId || r.task_id === taskId || r.data?.taskId === taskId
+        );
+
+        if (taskReviews.length > 0) {
+          md += `#### 🔍 Supervisor Review Attempts Log\n`;
+          taskReviews.forEach((rev, idx) => {
+            const revData = rev.data || rev;
+            md += `- **Attempt ${idx + 1}:** Decision \`${revData.decision || 'N/A'}\` | Score: **${revData.score !== undefined ? revData.score : 'N/A'}%**\n`;
+            if (revData.reviewSummary) {
+              md += `  - **Feedback:** ${revData.reviewSummary}\n`;
+            }
+          });
+          md += `\n`;
+        }
+
+        // Find evidence artifacts for this task
+        const taskArtifacts = (history.artifacts || []).filter(
+          (a) => a.taskId === taskId || a.task_id === taskId || (a.name && a.name.includes(taskId))
+        );
+
+        if (taskArtifacts.length > 0) {
+          md += `#### 📂 Evidence Artifacts & Worker Attempt Submissions\n`;
+          taskArtifacts.forEach((art) => {
+            const relPath = art.path ? path.relative(path.join(this.baseDirectory, history.run?.id || ''), art.path).replace(/\\/g, '/') : art.name;
+            md += `- [${art.name}](${relPath}) (${(art.sizeBytes || 0)} bytes)\n`;
+          });
+          md += `\n`;
+        }
+
+        md += `---\n\n`;
+      });
+    } else {
+      md += `*No task records found.*\n\n`;
+    }
 
     return md;
   }

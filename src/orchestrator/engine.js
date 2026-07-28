@@ -39,6 +39,7 @@ export class GoalThreadEngine {
   }) {
     this.repo = repository;
     this.artifacts = artifactManager;
+    this.artifactManager = artifactManager || this.artifacts;
     this.emitter = eventEmitter;
     this.supervisorModel = supervisorModel;
     this.workerModel = workerModel;
@@ -268,12 +269,38 @@ export class GoalThreadEngine {
             attemptNumber,
           };
 
+          if (!taskContract.title || taskContract.title === 'Execute Task') {
+            taskContract.title = currentPhase.title || goalSpec?.title || 'Execute Goal Phase';
+          }
+          if (!taskContract.objective || taskContract.objective === 'Execute Task' || taskContract.objective === 'Execute task objective') {
+            taskContract.objective = currentPhase.description || goalSpec?.objective || goalSpec?.title || 'Fulfill goal requirements';
+          }
+          if (!Array.isArray(taskContract.instructions) || taskContract.instructions.length === 0 || taskContract.instructions[0] === 'Execute Task') {
+            taskContract.instructions = [
+              `Execute phase: ${currentPhase.title}`,
+              `Phase description: ${currentPhase.description || goalSpec?.objective}`,
+              `Synthesize comprehensive, detailed, long-form written deliverable content for: ${goalSpec?.title || 'Goal task'}`
+            ];
+          }
+
           this.repo.saveTask(taskContract);
           this.emit('TASK_ASSIGNED', { runId, task: taskContract });
 
           // 2. Worker executes Task Contract
           this.emit('WORKER_STARTED', { runId, taskId });
-          const workerPrompt = `Execute assigned task:\n${JSON.stringify(taskContract, null, 2)}`;
+          const workerPrompt = `You are the Autonomous Worker Thread executing a task for the overall goal: "${goalSpec?.title || goalSpec?.objective || 'Goal Execution'}"
+
+Overall Goal Objective: ${goalSpec?.objective || 'Goal Execution'}
+
+Assigned Task Contract:
+- Title: ${taskContract.title || currentPhase.title}
+- Objective: ${taskContract.objective || currentPhase.description}
+- Instructions:
+${Array.isArray(taskContract.instructions) ? taskContract.instructions.map((i) => `  - ${i}`).join('\n') : `  - ${taskContract.instructions}`}
+
+CRITICAL MANDATE:
+You must write the COMPLETE, THOROUGH, LONG-FORM, UNTRUNCATED deliverable text (Markdown guide, technical article, code examples, comparison tables, and analysis).
+Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the complete written deliverable content under the 'deliverables' field in your JSON response!`;
           const workerRes = await generateStructuredOutput({
             model: this.workerModel,
             schema: WorkerResultSchema,
@@ -317,6 +344,54 @@ export class GoalThreadEngine {
           this.repo.saveSupervisorReview(lastReview, runId);
 
           const recordScore = typeof lastReview.score === 'number' ? lastReview.score : (lastReview.decision === 'PASS' ? 100 : (lastReview.decision === 'PARTIAL' ? 65 : 40));
+
+          // Save attempt evidence artifact file
+          let attemptEvidenceText = `# Evidence Log - Task [${taskId}] Attempt ${attemptNumber}\n\n`;
+          attemptEvidenceText += `- **Run ID:** ${runId}\n`;
+          attemptEvidenceText += `- **Task ID:** ${taskId}\n`;
+          attemptEvidenceText += `- **Attempt Number:** ${attemptNumber}\n`;
+          attemptEvidenceText += `- **Supervisor Decision:** \`${lastReview.decision}\`\n`;
+          attemptEvidenceText += `- **Supervisor Score:** ${recordScore}%\n`;
+          attemptEvidenceText += `- **Timestamp:** ${new Date().toISOString()}\n\n`;
+          attemptEvidenceText += `---\n\n`;
+          attemptEvidenceText += `## 📋 Worker Executive Summary\n${workerResult.summary || 'No summary provided'}\n\n`;
+
+          if (workerResult.deliverables && typeof workerResult.deliverables === 'object') {
+            attemptEvidenceText += `## 📝 Worker Deliverables & Output Content\n`;
+            for (const [k, v] of Object.entries(workerResult.deliverables)) {
+              attemptEvidenceText += `### ${k}\n`;
+              attemptEvidenceText += typeof v === 'string' ? `${v}\n\n` : `\`\`\`json\n${JSON.stringify(v, null, 2)}\n\`\`\`\n\n`;
+            }
+          }
+
+          if (workerResult.evidence && Array.isArray(workerResult.evidence) && workerResult.evidence.length > 0) {
+            attemptEvidenceText += `## 🔍 Worker Evidence & Citations\n`;
+            workerResult.evidence.forEach((ev) => {
+              attemptEvidenceText += `- **Source:** ${ev.source || 'N/A'}\n  ${ev.content}\n`;
+            });
+            attemptEvidenceText += `\n`;
+          }
+
+          attemptEvidenceText += `## 🔍 Supervisor Review & Feedback\n`;
+          attemptEvidenceText += `- **Review Summary:** ${lastReview.reviewSummary || 'N/A'}\n`;
+          if (lastReview.issues && Array.isArray(lastReview.issues) && lastReview.issues.length > 0) {
+            attemptEvidenceText += `- **Identified Issues:**\n`;
+            lastReview.issues.forEach((iss) => {
+              attemptEvidenceText += `  - [${iss.severity || 'issue'}] ${iss.description || JSON.stringify(iss)}\n`;
+            });
+          }
+
+          let evidenceMeta = null;
+          if (this.artifactManager && typeof this.artifactManager.writeArtifact === 'function') {
+            evidenceMeta = this.artifactManager.writeArtifact(
+              runId,
+              `evidence/task_${taskId}_attempt_${attemptNumber}.md`,
+              attemptEvidenceText,
+              { taskId, mimeType: 'text/markdown' }
+            );
+            if (this.repo) this.repo.saveArtifact(evidenceMeta);
+          }
+
           attemptRecords.push({
             attemptNumber,
             taskId,
@@ -324,6 +399,7 @@ export class GoalThreadEngine {
             workerResult,
             review: lastReview,
             score: recordScore,
+            evidenceMeta,
           });
 
           // Update token & progress metrics

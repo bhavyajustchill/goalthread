@@ -1,11 +1,22 @@
 # GoalThread - Autonomous Supervisor-Worker AI SDK & CLI
 
-**GoalThread** is a Node.js SDK and command-line application that completes complex goals using two independent AI threads on **OpenRouter**:
+**GoalThread** is a Node.js SDK and command-line application that completes complex goals using two independent AI threads:
 
-1. **Supervisor Thread (OpenRouter)**: Plans the project, generates task contracts, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance (Default: `google/gemini-3.6-flash`).
-2. **Worker Thread (OpenRouter)**: Executes assigned tasks, returns structured evidence and deliverables, and reports limitations (Default: `deepseek/deepseek-v4-flash`).
+1. **Supervisor Thread**: Plans the project, generates task contracts, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance (Default: `google/gemini-3.6-flash`).
+2. **Worker Thread**: Executes assigned tasks, returns structured evidence and deliverables, and reports limitations (Default: `deepseek/deepseek-v4-flash`).
 
-Powered by **Vercel AI SDK**, **Zod** schema enforcement, and **SQLite** transactional persistence.
+> 🌟 **Full Custom & Local LLM Support:** GoalThread works seamlessly with **OpenRouter**, **Groq**, **OpenAI**, **Anthropic**, OR **any 100% OpenAI-compatible AI Provider** (e.g. **LM Studio**, **Ollama**, **Jan**, **LocalAI**, **vLLM**, **FastChat**).
+
+---
+
+## ✨ Key Features
+
+- ⚡ **Dual-Thread Autonomous Architecture:** Separate Supervisor (Planner & Auditor) and Worker (Executor) roles prevent single-agent feedback loops.
+- 🏠 **100% Custom & Local OpenAI-Compatible LLM Support:** Easily connect to LM Studio, Ollama, Jan, or custom cloud endpoints using `baseURL`.
+- 🛡️ **Multi-Schema Resilient Normalization Layer:** Built-in JSON recovery & repair automatically handles loose or wrapped LLM outputs without crashing.
+- 🔄 **Best Candidate Evaluation on Max Retries:** When max retries are reached, GoalThread evaluates all attempt outputs and automatically selects the highest-scoring candidate.
+- 📂 **Per-Attempt Evidence Logging:** Generates standalone markdown evidence files for every attempt in `./goalthread-runs/<runId>/evidence/`.
+- 💾 **SQLite Transactional Persistence:** Full state checkpointing allows pausing, inspecting, and resuming runs at any time.
 
 ---
 
@@ -39,25 +50,40 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Open `.env` and add your **OpenRouter** API key and retry preferences:
+Open `.env` to configure dedicated provider settings:
 
+#### Option A: OpenRouter Configuration (Cloud Default)
 ```env
-# OpenRouter Credentials
-OPENROUTER_API_KEY=sk-or-v1-your_openrouter_api_key_here
+# Dedicated Supervisor Configuration (Default: Gemini 3.6 Flash)
+SUPERVISOR_PROVIDER=openrouter
+SUPERVISOR_MODEL=google/gemini-3.6-flash
+SUPERVISOR_API_KEY=sk-or-v1-your_openrouter_key_here
 
-# Supervisor AI Model on OpenRouter
-OPENROUTER_SUPERVISOR_MODEL=google/gemini-3.6-flash
+# Dedicated Worker Configuration (Default: DeepSeek v4 Flash)
+WORKER_PROVIDER=openrouter
+WORKER_MODEL=deepseek/deepseek-v4-flash
+WORKER_API_KEY=sk-or-v1-your_openrouter_key_here
 
-# Worker AI Model on OpenRouter
-OPENROUTER_WORKER_MODEL=deepseek/deepseek-v4-flash
-
-# GoalThread Retry & Candidate Evaluation Settings
-# Maximum retries per task attempt before selecting best candidate output (Default: 2)
+# GoalThread Retry Settings
 GOALTHREAD_MAX_RETRIES=2
 
 # Storage Settings
 GOALTHREAD_DB_PATH=./.goalthread/goalthread.db
 GOALTHREAD_RUNS_DIR=./goalthread-runs
+```
+
+#### Option B: Local LLM Server Configuration (LM Studio, Ollama, Jan, LocalAI)
+Run completely offline with custom OpenAI-compatible local endpoints:
+```env
+# Local LM Studio / Ollama for Supervisor Thread
+SUPERVISOR_PROVIDER=custom
+SUPERVISOR_MODEL=google/gemma-4-e4b
+SUPERVISOR_BASE_URL=http://localhost:1234/v1
+
+# Local LM Studio / Ollama for Worker Thread
+WORKER_PROVIDER=custom
+WORKER_MODEL=google/gemma-4-e4b
+WORKER_BASE_URL=http://localhost:1234/v1
 ```
 
 ---
@@ -112,26 +138,68 @@ node bin/goalthread.js history <runId>
 
 ---
 
-### 6. View Final Deliverables
+### 6. View Final Deliverables & Attempt Evidence
 
 All generated outputs are saved in `./goalthread-runs/<runId>/`:
 - `final.md` - Complete synthesized Markdown deliverable.
-- `execution-summary.md` - Executive execution timeline summary.
+- `execution-summary.md` - Executive execution timeline summary & task attempt audit trail.
+- `evidence/` - Per-attempt evidence logs (`task_<taskId>_attempt_<n>.md`) with raw written deliverables.
 - `task-history.json` - Raw task contracts and worker responses.
 - `reviews.json` - Supervisor quality reviews and scores.
 
 ---
 
-## 🧪 Offline Testing (No API Keys Needed)
+## 🏠 Custom & Local OpenAI-Compatible AI Provider Setup
 
-You can test the entire workflow without spending API tokens using offline mock mode:
+GoalThread features native support for **100% custom OpenAI-compatible AI providers**. You can run GoalThread completely offline or on self-hosted infrastructure using **LM Studio**, **Ollama**, **Jan**, **LocalAI**, **vLLM**, **FastChat**, or any custom API base URL.
+
+### 1. Via CLI Flags
+Override model providers directly on the command line:
 
 ```bash
-# Run autonomous goal loop with mock models
-node bin/goalthread.js run "Build a market report on AI note taking apps" --mock
+# Run with LM Studio on localhost
+node bin/goalthread.js run "Write a technical comparison of React vs Vue" \
+  --supervisor-provider custom \
+  --supervisor-model google/gemma-4-e4b \
+  --supervisor-base-url http://localhost:1234/v1 \
+  --worker-provider custom \
+  --worker-model google/gemma-4-e4b \
+  --worker-base-url http://localhost:1234/v1
+```
 
-# Run automated unit and integration tests
-npm test
+### 2. Via Environment Variables (`.env`)
+Set defaults in your `.env` file:
+
+```env
+# Supervisor using local LM Studio / Ollama
+SUPERVISOR_PROVIDER=custom
+SUPERVISOR_MODEL=google/gemma-4-e4b
+SUPERVISOR_BASE_URL=http://localhost:1234/v1
+
+# Worker using local LM Studio / Ollama
+WORKER_PROVIDER=custom
+WORKER_MODEL=google/gemma-4-e4b
+WORKER_BASE_URL=http://localhost:1234/v1
+```
+
+### 3. Via Node.js SDK
+Pass `provider: 'custom'` and your server's `baseURL`:
+
+```javascript
+import { GoalThread } from '@bhavyajustchill/goalthread';
+
+const localClient = new GoalThread({
+  supervisor: {
+    provider: 'custom',
+    model: 'google/gemma-4-e4b',
+    baseURL: 'http://localhost:1234/v1',
+  },
+  worker: {
+    provider: 'custom',
+    model: 'google/gemma-4-e4b',
+    baseURL: 'http://localhost:1234/v1',
+  },
+});
 ```
 
 ---
@@ -143,6 +211,7 @@ You can also use GoalThread as a library in your own Node.js applications:
 ```javascript
 import { GoalThread } from '@bhavyajustchill/goalthread';
 
+// Example 1: Standard Providers (groq, openrouter, openai)
 const client = new GoalThread({
   supervisor: {
     provider: 'groq',
@@ -153,6 +222,21 @@ const client = new GoalThread({
     provider: 'openrouter',
     apiKey: process.env.OPENROUTER_API_KEY,
     model: 'deepseek/deepseek-v4-flash',
+  },
+});
+
+// Example 2: Custom / OpenAI-Compatible Provider (Ollama, LM Studio, LocalAI, vLLM, etc.)
+const customClient = new GoalThread({
+  supervisor: {
+    provider: 'custom',
+    model: 'llama3:latest',
+    baseURL: 'http://localhost:11434/v1',
+    // apiKey: 'optional-api-key'
+  },
+  worker: {
+    provider: 'custom',
+    model: 'mistral:latest',
+    baseURL: 'http://localhost:11434/v1',
   },
 });
 
