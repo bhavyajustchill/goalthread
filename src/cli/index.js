@@ -47,15 +47,16 @@ program
   .option('-w, --worker-model <model>', 'Worker model override')
   .option('--supervisor-provider <provider>', 'Supervisor provider override (groq or openrouter)')
   .option('-m, --max-tasks <number>', 'Maximum tasks limit', parseInt, 100)
+  .option('-r, --max-retries <number>', 'Maximum retry attempts per task (default from GOALTHREAD_MAX_RETRIES env or 2)', parseInt, parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10))
   .option('--mock', 'Run in offline mock mode for testing')
   .action(async (goal, options) => {
     console.log(chalk.bold.cyan(`\n🚀 Submitting Goal:`), goal, '\n');
-    const spinner = ora('Supervisor planning goal specification...').start();
+    console.log(chalk.gray('Supervisor planning goal specification...'));
 
     const client = new GoalThread({
       supervisor: {
         provider: options.mock ? 'mock' : (options.supervisorProvider || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter'),
-        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-2.5-flash',
+        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
       },
       worker: {
         provider: options.mock ? 'mock' : 'openrouter',
@@ -64,52 +65,70 @@ program
     });
 
     client.on('GOAL_CREATED', (evt) => {
-      console.log(chalk.bold.yellow(`📌 Run ID:`), evt.runId, '\n');
+      console.log(chalk.bold.yellow(`📌 Run ID:`), evt.runId);
     });
 
     client.on('PLAN_CREATED', (evt) => {
-      spinner.succeed(chalk.green(`Plan created: "${evt.spec.title}"`));
-      console.log(chalk.gray(`   Phases: ${evt.spec.proposedPhases.map((p) => p.title).join(' -> ')}`));
-      spinner.start('Assigning first task to Worker thread...');
+      console.log(chalk.green.bold(`\n✔ Plan created: "${evt.spec.title}"`));
+      console.log(chalk.gray(`   Phases: ${evt.spec.proposedPhases.map((p) => p.title).join(' -> ')}\n`));
     });
 
     client.on('TASK_ASSIGNED', (evt) => {
-      spinner.text = `Task assigned [${evt.task.taskId}]: ${evt.task.title}`;
+      console.log(chalk.cyan(`⚙ Task assigned [${evt.task.taskId}]: ${evt.task.title}`));
     });
 
     client.on('WORKER_COMPLETED', (evt) => {
-      spinner.text = `Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`;
+      console.log(chalk.blue(`📝 Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`));
     });
 
     client.on('TASK_PASSED', (evt) => {
-      spinner.succeed(chalk.green(`Task passed [${evt.taskId}]: Score ${evt.review.score}/100`));
-      spinner.start('Preparing next task step...');
+      if (evt.isBestCandidate) {
+        console.log(chalk.yellow.bold(`⭐ Selected Best Candidate Output for [${evt.taskId}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`));
+      } else {
+        console.log(chalk.green.bold(`✔ Task passed [${evt.taskId}] -> Status: ${evt.outcomeStatus || 'PASS'} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`));
+      }
     });
 
     client.on('TASK_FAILED', (evt) => {
-      spinner.warn(chalk.yellow(`Task failed review [${evt.taskId}]. Decision: ${evt.review.decision}`));
+      const attemptsInfo = evt.currentAttempt && evt.maxAttempts ? `Attempt ${evt.currentAttempt}/${evt.maxAttempts}` : 'Attempt';
+      console.log(chalk.yellow(`⚠ ${attemptsInfo} for [${evt.taskId}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`));
+      if (evt.review.reviewSummary || evt.review.feedback) {
+        console.log(chalk.yellow(`   Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`));
+      }
+    });
+
+    client.on('BEST_CANDIDATE_SELECTED', (evt) => {
+      console.log(chalk.yellow.bold(`\n🏆 Max retries (${evt.totalAttempts}) reached. Evaluated all outputs -> Selected Best Candidate Attempt ${evt.attemptNumber} [Status: ${evt.outcomeStatus}, Score: ${evt.scorePercentage}]\n`));
+    });
+
+    client.on('INVALID_JSON_FALLBACK', (evt) => {
+      console.log(chalk.yellow.bold(`\n⚠️ Invalid JSON output on attempt ${evt.attemptNumber}. Automatically falling back to best previous iteration output with Supervisor review!\n`));
     });
 
     client.on('TASK_RETRYING', (evt) => {
-      spinner.start(chalk.blue(`Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber})...`));
+      const maxInfo = evt.maxAttempts ? `/${evt.maxAttempts}` : '';
+      console.log(chalk.magenta(`🔄 Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`));
     });
 
     client.on('FINAL_QA_STARTED', () => {
-      spinner.start('Supervisor executing final quality gate verification...');
+      console.log(chalk.cyan(`🔍 Supervisor executing final quality gate verification...`));
     });
 
     client.on('GOAL_COMPLETED', (evt) => {
-      spinner.succeed(chalk.green.bold('🎉 Goal Completed Successfully!'));
-      console.log(chalk.cyan(`\nDeliverable generated at:`), evt.artifactPath, '\n');
+      console.log(chalk.green.bold('\n🎉 Goal Completed Successfully!'));
+      console.log(chalk.cyan(`Deliverable generated at:`), evt.artifactPath, '\n');
     });
 
     try {
       await client.run({
         goal,
-        limits: { maxTasks: options.maxTasks },
+        limits: {
+          maxTasks: options.maxTasks,
+          maxAttemptsPerTask: options.maxRetries || parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10),
+        },
       });
     } catch (error) {
-      spinner.fail(chalk.red(`Goal execution stopped: ${error.message}`));
+      console.log(chalk.red.bold(`\n✖ Goal execution stopped: ${error.message}\n`));
       process.exit(1);
     }
   });
@@ -121,15 +140,15 @@ program
   .option('-s, --supervisor-model <model>', 'Supervisor model override')
   .option('-w, --worker-model <model>', 'Worker model override')
   .option('--supervisor-provider <provider>', 'Supervisor provider override (groq or openrouter)')
+  .option('-r, --max-retries <number>', 'Maximum retry attempts per task', parseInt, parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10))
   .option('--mock', 'Use mock models for resume')
   .action(async (runId, options) => {
     console.log(chalk.cyan(`\nResuming Run:`), runId, '\n');
-    const spinner = ora('Restoring state from SQLite checkpoint...').start();
 
     const client = new GoalThread({
       supervisor: {
         provider: options.mock ? 'mock' : (options.supervisorProvider || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter'),
-        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-2.5-flash',
+        model: options.supervisorModel || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
       },
       worker: {
         provider: options.mock ? 'mock' : 'openrouter',
@@ -137,20 +156,53 @@ program
       },
     });
 
+    client.on('TASK_ASSIGNED', (evt) => {
+      console.log(chalk.cyan(`⚙ Task assigned [${evt.task.taskId}]: ${evt.task.title}`));
+    });
+
+    client.on('WORKER_COMPLETED', (evt) => {
+      console.log(chalk.blue(`📝 Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`));
+    });
+
     client.on('TASK_PASSED', (evt) => {
-      spinner.succeed(chalk.green(`Task passed [${evt.taskId}]: Score ${evt.review.score}/100`));
-      spinner.start('Continuing loop...');
+      if (evt.isBestCandidate) {
+        console.log(chalk.yellow.bold(`⭐ Selected Best Candidate Output for [${evt.taskId}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`));
+      } else {
+        console.log(chalk.green.bold(`✔ Task passed [${evt.taskId}] -> Status: ${evt.outcomeStatus || 'PASS'} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`));
+      }
+    });
+
+    client.on('TASK_FAILED', (evt) => {
+      const attemptsInfo = evt.currentAttempt && evt.maxAttempts ? `Attempt ${evt.currentAttempt}/${evt.maxAttempts}` : 'Attempt';
+      console.log(chalk.yellow(`⚠ ${attemptsInfo} for [${evt.taskId}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`));
+      if (evt.review.reviewSummary || evt.review.feedback) {
+        console.log(chalk.yellow(`   Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`));
+      }
+    });
+
+    client.on('BEST_CANDIDATE_SELECTED', (evt) => {
+      console.log(chalk.yellow.bold(`\n🏆 Max retries (${evt.totalAttempts}) reached. Evaluated all outputs -> Selected Best Candidate Attempt ${evt.attemptNumber} [Status: ${evt.outcomeStatus}, Score: ${evt.scorePercentage}]\n`));
+    });
+
+    client.on('TASK_RETRYING', (evt) => {
+      const maxInfo = evt.maxAttempts ? `/${evt.maxAttempts}` : '';
+      console.log(chalk.magenta(`🔄 Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`));
     });
 
     client.on('GOAL_COMPLETED', (evt) => {
-      spinner.succeed(chalk.green.bold('🎉 Goal Resumed & Completed Successfully!'));
-      console.log(chalk.cyan(`\nDeliverable generated at:`), evt.artifactPath, '\n');
+      console.log(chalk.green.bold('\n🎉 Goal Resumed & Completed Successfully!'));
+      console.log(chalk.cyan(`Deliverable generated at:`), evt.artifactPath, '\n');
     });
 
     try {
-      await client.resume({ runId });
+      await client.resume({
+        runId,
+        limits: {
+          maxAttemptsPerTask: options.maxRetries || parseInt(process.env.GOALTHREAD_MAX_RETRIES || '2', 10),
+        },
+      });
     } catch (error) {
-      spinner.fail(chalk.red(`Resume failed: ${error.message}`));
+      console.log(chalk.red.bold(`\n✖ Resume failed: ${error.message}\n`));
       process.exit(1);
     }
   });

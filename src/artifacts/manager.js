@@ -89,18 +89,37 @@ export class ArtifactManager {
         const taskObj = history.tasks?.find((t) => t.taskId === taskId || t.task_id === taskId);
         const title = taskObj?.title || taskId;
         const data = res.data || res;
+        const rev = history.supervisorReviews?.find((r) => r.taskId === taskId || r.task_id === taskId || r.data?.taskId === taskId);
+        const revData = rev?.data || rev;
 
         if (data) {
           finalMarkdownContent += `## Section: ${title}\n\n`;
-          if (data.summary) {
-            finalMarkdownContent += `### Summary & Key Findings\n${data.summary}\n\n`;
+
+          if (revData) {
+            finalMarkdownContent += `### 🔍 Supervisor Evaluation\n`;
+            finalMarkdownContent += `- **Status / Decision:** ${revData.decision || 'N/A'} | **Score:** ${revData.score !== undefined ? revData.score : 'N/A'}%\n`;
+            if (revData.reviewSummary) {
+              finalMarkdownContent += `- **Review Notes:** ${revData.reviewSummary}\n`;
+            }
+            finalMarkdownContent += `\n`;
           }
+
+          if (data.summary) {
+            finalMarkdownContent += `### Worker Executive Summary & Findings\n${data.summary}\n\n`;
+          }
+
           if (data.deliverables && typeof data.deliverables === 'object') {
+            finalMarkdownContent += `### Worker Deliverables & Written Content\n`;
             for (const [key, val] of Object.entries(data.deliverables)) {
-              finalMarkdownContent += `### ${key.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase())}\n`;
-              finalMarkdownContent += `${typeof val === 'object' ? JSON.stringify(val, null, 2) : val}\n\n`;
+              finalMarkdownContent += `#### ${key.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase())}\n`;
+              if (typeof val === 'string') {
+                finalMarkdownContent += `${val}\n\n`;
+              } else {
+                finalMarkdownContent += `${JSON.stringify(val, null, 2)}\n\n`;
+              }
             }
           }
+
           if (data.evidence && Array.isArray(data.evidence) && data.evidence.length > 0) {
             finalMarkdownContent += `### Evidence & References\n`;
             data.evidence.forEach((ev) => {
@@ -108,6 +127,7 @@ export class ArtifactManager {
             });
             finalMarkdownContent += `\n`;
           }
+
           finalMarkdownContent += `---\n\n`;
         }
       });

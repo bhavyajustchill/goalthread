@@ -45,13 +45,13 @@ export function createModelInstance(config = {}) {
     // Prefer official OpenRouter AI SDK provider if available, or fallback to custom OpenAI adapter
     try {
       const openrouter = createOpenRouter({ apiKey: key });
-      return openrouter(model || 'deepseek/deepseek-v4-flash');
+      return openrouter(model || 'google/gemini-3.6-flash');
     } catch {
       const openrouterOpenAI = createOpenAI({
         baseURL: 'https://openrouter.ai/api/v1',
         apiKey: key,
       });
-      return openrouterOpenAI(model || 'deepseek/deepseek-v4-flash');
+      return openrouterOpenAI(model || 'google/gemini-3.6-flash');
     }
   }
 

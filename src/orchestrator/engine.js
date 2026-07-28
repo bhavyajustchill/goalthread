@@ -43,9 +43,13 @@ export class GoalThreadEngine {
     this.supervisorModel = supervisorModel;
     this.workerModel = workerModel;
 
+    const envRetries = process.env.GOALTHREAD_MAX_RETRIES ? parseInt(process.env.GOALTHREAD_MAX_RETRIES, 10) : NaN;
+
     this.limits = {
       maxTasks: limits.maxTasks || 100,
-      maxAttemptsPerTask: limits.maxAttemptsPerTask || 3,
+      maxAttemptsPerTask: !isNaN(limits.maxAttemptsPerTask)
+        ? limits.maxAttemptsPerTask
+        : (!isNaN(limits.maxRetriesPerTask) ? limits.maxRetriesPerTask : (!isNaN(envRetries) ? envRetries : 2)),
       maxTotalTokens: limits.maxTotalTokens || 1000000,
       maxEstimatedCostUsd: limits.maxEstimatedCostUsd || 25,
     };
@@ -117,9 +121,9 @@ export class GoalThreadEngine {
           taskId: extra.taskId || 'task_1',
           runId: extra.runId || 'run_mock',
           status: extra.forceFail ? 'failed' : 'completed',
-          summary: 'Task executed successfully with complete findings.',
-          deliverables: { reportSection: 'Detailed synthesized content for objective.' },
-          evidence: [{ id: 'ev-1', source: 'Internal Knowledge', content: 'Verified data points', relevance: 'High' }],
+          summary: 'Task execution completed.',
+          deliverables: {},
+          evidence: [],
           citations: [],
           assumptions: [],
           limitations: [],
@@ -220,129 +224,210 @@ export class GoalThreadEngine {
       let taskPassed = false;
       let attemptNumber = 1;
       let lastReview = null;
+      const attemptRecords = [];
 
       while (!taskPassed && attemptNumber <= this.limits.maxAttemptsPerTask) {
         const taskId = `task_${runId.slice(0, 6)}_${sequence}`;
 
-        // 1. Supervisor generates Task Contract (Context Compressed per Section 18.3)
-        const compressedHistory = history.tasks
-          .filter((t) => t.status === 'passed')
-          .map((t) => {
-            const res = history.workerResults.find((r) => r.taskId === t.taskId);
-            const summary = res?.data?.summary || 'Task completed successfully.';
-            return `- Task [${t.taskId}]: ${t.title} (Passed) - ${summary}`;
-          })
-          .join('\n');
+        try {
+          // 1. Supervisor generates Task Contract (Context Compressed per Section 18.3)
+          const compressedHistory = history.tasks
+            .filter((t) => t.status === 'passed')
+            .map((t) => {
+              const res = history.workerResults.find((r) => r.taskId === t.taskId);
+              const summary = res?.data?.summary || 'Task completed successfully.';
+              return `- Task [${t.taskId}]: ${t.title} (Passed) - ${summary}`;
+            })
+            .join('\n');
 
-        const taskPrompt = TASK_GENERATION_PROMPT
-          .replace('{{GOAL_SPEC}}', JSON.stringify({ title: goalSpec.title, objective: goalSpec.objective, completionCriteria: goalSpec.completionCriteria }))
-          .replace('{{COMPLETED_HISTORY}}', compressedHistory || 'None yet')
-          .replace('{{CURRENT_PHASE}}', JSON.stringify({ phaseId: currentPhase.phaseId, title: currentPhase.title, description: currentPhase.description }));
+          const taskPrompt = TASK_GENERATION_PROMPT
+            .replace('{{GOAL_SPEC}}', JSON.stringify({ title: goalSpec.title, objective: goalSpec.objective, completionCriteria: goalSpec.completionCriteria }))
+            .replace('{{COMPLETED_HISTORY}}', compressedHistory || 'None yet')
+            .replace('{{CURRENT_PHASE}}', JSON.stringify({ phaseId: currentPhase.phaseId, title: currentPhase.title, description: currentPhase.description }));
 
-        const taskRes = await generateStructuredOutput({
-          model: this.supervisorModel,
-          schema: TaskContractSchema,
-          prompt: taskPrompt,
-          system: SUPERVISOR_SYSTEM_PROMPT,
-          mockGenerator: this.createMockGenerator('taskContract', {
+          const taskRes = await generateStructuredOutput({
+            model: this.supervisorModel,
+            schema: TaskContractSchema,
+            prompt: taskPrompt,
+            system: SUPERVISOR_SYSTEM_PROMPT,
+            mockGenerator: this.createMockGenerator('taskContract', {
+              taskId,
+              runId,
+              phaseId: currentPhase.phaseId,
+              sequence,
+              attemptNumber,
+            }),
+          });
+
+          const taskContract = {
+            ...taskRes.object,
             taskId,
             runId,
             phaseId: currentPhase.phaseId,
             sequence,
             attemptNumber,
-          }),
-        });
+          };
 
-        const taskContract = {
-          ...taskRes.object,
-          taskId,
-          runId,
-          phaseId: currentPhase.phaseId,
-          sequence,
-          attemptNumber,
-        };
+          this.repo.saveTask(taskContract);
+          this.emit('TASK_ASSIGNED', { runId, task: taskContract });
 
-        this.repo.saveTask(taskContract);
-        this.emit('TASK_ASSIGNED', { runId, task: taskContract });
-
-        // 2. Worker executes Task Contract
-        this.emit('WORKER_STARTED', { runId, taskId });
-        const workerPrompt = `Execute assigned task:\n${JSON.stringify(taskContract, null, 2)}`;
-        const workerRes = await generateStructuredOutput({
-          model: this.workerModel,
-          schema: WorkerResultSchema,
-          prompt: workerPrompt,
-          system: WORKER_SYSTEM_PROMPT,
-          mockGenerator: this.createMockGenerator('workerResult', {
-            taskId,
-            runId,
-            forceFail: Boolean(attemptNumber === 1 && process.env.TEST_SIMULATE_FAIL),
-          }),
-        });
-
-        const workerResult = { ...workerRes.object, taskId, runId };
-        this.repo.saveWorkerResult(workerResult);
-        this.emit('WORKER_COMPLETED', { runId, result: workerResult });
-
-        // 3. Supervisor reviews Worker Result
-        this.emit('SUPERVISOR_REVIEW_STARTED', { runId, taskId });
-        const reviewPrompt = TASK_REVIEW_PROMPT
-          .replace('{{TASK_CONTRACT}}', JSON.stringify(taskContract))
-          .replace('{{WORKER_RESULT}}', JSON.stringify(workerResult));
-
-        const isLastTask = Boolean(
-          currentPhaseIndex === goalSpec.proposedPhases.length - 1 && attemptNumber === 1
-        );
-
-        const reviewRes = await generateStructuredOutput({
-          model: this.supervisorModel,
-          schema: SupervisorReviewSchema,
-          prompt: reviewPrompt,
-          system: SUPERVISOR_SYSTEM_PROMPT,
-          mockGenerator: this.createMockGenerator('supervisorReview', {
-            taskId,
-            runId,
-            forceFail: workerResult.status === 'failed',
-            isLastTask,
-          }),
-        });
-
-        lastReview = { ...reviewRes.object, taskId };
-        this.repo.saveSupervisorReview(lastReview, runId);
-
-        // Update token & progress metrics
-        const totalTokens = taskRes.usage.totalTokens + workerRes.usage.totalTokens + reviewRes.usage.totalTokens;
-        const progress = Math.min(95, Math.round(((currentPhaseIndex + 1) / goalSpec.proposedPhases.length) * 100));
-        this.repo.updateRunStatus(runId, 'working', {
-          phase: currentPhase.title,
-          progress,
-          tokensUsed: totalTokens,
-          estimatedCost: totalTokens * 0.000002,
-        });
-
-        if (lastReview.decision === 'PASS') {
-          taskPassed = true;
-          this.emit('TASK_PASSED', { runId, taskId, review: lastReview });
-        } else if (lastReview.decision === 'NEEDS_USER_INPUT') {
-          stateMachine.transitionTo('waiting_for_user');
-          this.repo.updateRunStatus(runId, 'waiting_for_user');
-          this.emit('USER_INPUT_REQUIRED', {
-            runId,
-            question: lastReview.reviewSummary || 'Supervisor requires user input to proceed.',
+          // 2. Worker executes Task Contract
+          this.emit('WORKER_STARTED', { runId, taskId });
+          const workerPrompt = `Execute assigned task:\n${JSON.stringify(taskContract, null, 2)}`;
+          const workerRes = await generateStructuredOutput({
+            model: this.workerModel,
+            schema: WorkerResultSchema,
+            prompt: workerPrompt,
+            system: WORKER_SYSTEM_PROMPT,
+            mockGenerator: this.createMockGenerator('workerResult', {
+              taskId,
+              runId,
+              forceFail: Boolean(attemptNumber === 1 && process.env.TEST_SIMULATE_FAIL),
+            }),
           });
-          throw new UserInputRequiredError(lastReview.reviewSummary);
-        } else {
-          attemptNumber++;
-          this.emit('TASK_FAILED', { runId, taskId, review: lastReview });
-          if (attemptNumber <= this.limits.maxAttemptsPerTask) {
-            this.emit('TASK_RETRYING', { runId, taskId, attemptNumber });
+
+          const workerResult = { ...workerRes.object, taskId, runId };
+          this.repo.saveWorkerResult(workerResult);
+          this.emit('WORKER_COMPLETED', { runId, result: workerResult });
+
+          // 3. Supervisor reviews Worker Result
+          this.emit('SUPERVISOR_REVIEW_STARTED', { runId, taskId });
+          const reviewPrompt = TASK_REVIEW_PROMPT
+            .replace('{{TASK_CONTRACT}}', JSON.stringify(taskContract))
+            .replace('{{WORKER_RESULT}}', JSON.stringify(workerResult));
+
+          const isLastTask = Boolean(
+            currentPhaseIndex === goalSpec.proposedPhases.length - 1 && attemptNumber === 1
+          );
+
+          const reviewRes = await generateStructuredOutput({
+            model: this.supervisorModel,
+            schema: SupervisorReviewSchema,
+            prompt: reviewPrompt,
+            system: SUPERVISOR_SYSTEM_PROMPT,
+            mockGenerator: this.createMockGenerator('supervisorReview', {
+              taskId,
+              runId,
+              forceFail: workerResult.status === 'failed',
+              isLastTask,
+            }),
+          });
+
+          lastReview = { ...reviewRes.object, taskId };
+          this.repo.saveSupervisorReview(lastReview, runId);
+
+          const recordScore = typeof lastReview.score === 'number' ? lastReview.score : (lastReview.decision === 'PASS' ? 100 : (lastReview.decision === 'PARTIAL' ? 65 : 40));
+          attemptRecords.push({
+            attemptNumber,
+            taskId,
+            taskContract,
+            workerResult,
+            review: lastReview,
+            score: recordScore,
+          });
+
+          // Update token & progress metrics
+          const totalTokens = taskRes.usage.totalTokens + workerRes.usage.totalTokens + reviewRes.usage.totalTokens;
+          const progress = Math.min(95, Math.round(((currentPhaseIndex + 1) / goalSpec.proposedPhases.length) * 100));
+          this.repo.updateRunStatus(runId, 'working', {
+            phase: currentPhase.title,
+            progress,
+            tokensUsed: totalTokens,
+            estimatedCost: totalTokens * 0.000002,
+          });
+
+          if (lastReview.decision === 'PASS') {
+            taskPassed = true;
+            this.emit('TASK_PASSED', {
+              runId,
+              taskId,
+              review: lastReview,
+              attemptNumber,
+              outcomeStatus: 'PASS',
+              scorePercentage: `${recordScore}%`,
+            });
+          } else if (lastReview.decision === 'NEEDS_USER_INPUT') {
+            stateMachine.transitionTo('waiting_for_user');
+            this.repo.updateRunStatus(runId, 'waiting_for_user');
+            this.emit('USER_INPUT_REQUIRED', {
+              runId,
+              question: lastReview.reviewSummary || 'Supervisor requires user input to proceed.',
+            });
+            throw new UserInputRequiredError(lastReview.reviewSummary);
+          } else {
+            this.emit('TASK_FAILED', {
+              runId,
+              taskId,
+              review: lastReview,
+              scorePercentage: `${recordScore}%`,
+              currentAttempt: attemptNumber,
+              maxAttempts: this.limits.maxAttemptsPerTask,
+            });
+            attemptNumber++;
+            if (attemptNumber <= this.limits.maxAttemptsPerTask) {
+              this.emit('TASK_RETRYING', {
+                runId,
+                taskId,
+                attemptNumber,
+                maxAttempts: this.limits.maxAttemptsPerTask,
+              });
+            }
+          }
+        } catch (attemptErr) {
+          if (attemptRecords.length > 0) {
+            this.emit('INVALID_JSON_FALLBACK', {
+              runId,
+              attemptNumber,
+              error: attemptErr.message,
+              previousAttemptsCount: attemptRecords.length,
+            });
+            break; // Fallback to best previous valid iteration
+          } else {
+            attemptNumber++;
+            if (attemptNumber > this.limits.maxAttemptsPerTask) {
+              throw attemptErr;
+            }
           }
         }
       }
 
-      if (!taskPassed) {
-        this.repo.updateRunStatus(runId, 'failed');
-        throw new TaskRetryExhaustedError(`Task ${currentPhase.phaseId} failed after ${this.limits.maxAttemptsPerTask} attempts.`);
+      let bestCandidateSelected = false;
+
+      // If task didn't receive explicit PASS after maxAttemptsPerTask, pick the best candidate attempt output!
+      if (!taskPassed && attemptRecords.length > 0) {
+        attemptRecords.sort((a, b) => b.score - a.score);
+        const best = attemptRecords[0];
+        const outcomeStatus = best.score >= 80 ? 'PASS' : best.score >= 45 ? 'PARTIAL' : 'FAIL';
+
+        best.taskContract.isBestCandidate = true;
+        best.taskContract.status = outcomeStatus.toLowerCase();
+        this.repo.saveTask(best.taskContract);
+        this.repo.saveWorkerResult(best.workerResult);
+        this.repo.saveSupervisorReview(best.review, runId);
+
+        taskPassed = true;
+        lastReview = best.review;
+        bestCandidateSelected = true;
+
+        this.emit('BEST_CANDIDATE_SELECTED', {
+          runId,
+          taskId: best.taskId,
+          review: best.review,
+          attemptNumber: best.attemptNumber,
+          totalAttempts: attemptRecords.length,
+          outcomeStatus,
+          scorePercentage: `${best.score}%`,
+        });
+
+        this.emit('TASK_PASSED', {
+          runId,
+          taskId: best.taskId,
+          review: best.review,
+          attemptNumber: best.attemptNumber,
+          outcomeStatus,
+          scorePercentage: `${best.score}%`,
+          isBestCandidate: true,
+        });
       }
 
       sequence++;
@@ -350,7 +435,7 @@ export class GoalThreadEngine {
       currentPhaseIndex++;
       history = this.repo.getRunHistory(runId);
 
-      if (lastReview && lastReview.goalComplete) {
+      if (bestCandidateSelected || (lastReview && lastReview.goalComplete)) {
         break;
       }
     }

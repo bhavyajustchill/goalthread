@@ -20,7 +20,7 @@ export const VALID_TRANSITIONS = {
   working: ['waiting_for_worker', 'reviewing', 'finalizing', 'waiting_for_user', 'failed', 'paused', 'cancelled'],
   waiting_for_worker: ['reviewing', 'failed', 'paused', 'cancelled'],
   reviewing: ['working', 'finalizing', 'waiting_for_user', 'failed', 'paused', 'cancelled'],
-  waiting_for_user: ['working', 'planning', 'cancelled', 'failed'],
+  waiting_for_user: ['working', 'planning', 'finalizing', 'cancelled', 'failed'],
   paused: ['working', 'planning', 'cancelled', 'failed'],
   finalizing: ['completed', 'failed', 'cancelled'],
   completed: [],

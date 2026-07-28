@@ -25,7 +25,7 @@ export class GoalThread extends EventEmitter {
     this.config = {
       supervisor: {
         provider: config.supervisor?.provider || 'openrouter',
-        model: config.supervisor?.model || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-2.5-flash',
+        model: config.supervisor?.model || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
         apiKey: config.supervisor?.apiKey || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY,
       },
       worker: {
