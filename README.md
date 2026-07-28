@@ -2,7 +2,7 @@
 
 **GoalThread** is a Node.js SDK and command-line application that completes complex goals using two independent AI threads on **OpenRouter**:
 
-1. **Supervisor Thread (OpenRouter)**: Plans the project, generates task contracts, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance (Default: `google/gemini-2.5-flash`).
+1. **Supervisor Thread (OpenRouter)**: Plans the project, generates task contracts, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance (Default: `google/gemini-3.6-flash`).
 2. **Worker Thread (OpenRouter)**: Executes assigned tasks, returns structured evidence and deliverables, and reports limitations (Default: `deepseek/deepseek-v4-flash`).
 
 Powered by **Vercel AI SDK**, **Zod** schema enforcement, and **SQLite** transactional persistence.
@@ -39,17 +39,21 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Open `.env` and add your **OpenRouter** API key:
+Open `.env` and add your **OpenRouter** API key and retry preferences:
 
 ```env
 # OpenRouter Credentials
 OPENROUTER_API_KEY=sk-or-v1-your_openrouter_api_key_here
 
 # Supervisor AI Model on OpenRouter
-OPENROUTER_SUPERVISOR_MODEL=google/gemini-2.5-flash
+OPENROUTER_SUPERVISOR_MODEL=google/gemini-3.6-flash
 
 # Worker AI Model on OpenRouter
 OPENROUTER_WORKER_MODEL=deepseek/deepseek-v4-flash
+
+# GoalThread Retry & Candidate Evaluation Settings
+# Maximum retries per task attempt before selecting best candidate output (Default: 2)
+GOALTHREAD_MAX_RETRIES=2
 
 # Storage Settings
 GOALTHREAD_DB_PATH=./.goalthread/goalthread.db
@@ -174,9 +178,9 @@ const result = await client.run({
 | Command | Description |
 | :--- | :--- |
 | `goalthread init` | Initializes `.goalthread/` database & `.env` workspace. |
-| `goalthread run "<goal>"` | Starts autonomous goal execution. |
+| `goalthread run "<goal>"` | Starts autonomous goal execution. Supports `-r, --max-retries <number>` (default: `GOALTHREAD_MAX_RETRIES` or `2`). |
 | `goalthread list` | Lists all past and active goal Run IDs stored in SQLite. |
-| `goalthread resume <runId>` | Resumes an interrupted run from SQLite checkpoint. |
+| `goalthread resume <runId>` | Resumes an interrupted run from SQLite checkpoint. Supports `-r, --max-retries <number>`. |
 | `goalthread status <runId>` | Displays current phase, progress %, tokens used, and estimated cost. |
 | `goalthread history <runId>` | Displays detailed task timeline and Supervisor review scores. |
 | `goalthread export <runId>` | Exports final Markdown report and JSON history files. |
