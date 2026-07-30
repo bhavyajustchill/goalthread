@@ -2,6 +2,63 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
+/**
+ * Recursively unwraps stringified JSON or nested deliverable objects to produce clean Markdown text
+ */
+export function extractCleanMarkdown(val) {
+  if (val === null || val === undefined) return '';
+
+  if (typeof val === 'string') {
+    let str = val.trim();
+    if (str.startsWith('```json') && str.endsWith('```')) {
+      str = str.slice(7, -3).trim();
+    } else if (str.startsWith('```') && str.endsWith('```')) {
+      str = str.slice(3, -3).trim();
+    }
+
+    if (str.startsWith('{') && str.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(str);
+        return extractCleanMarkdown(parsed);
+      } catch {
+        // Fallthrough if parsing fails
+      }
+    }
+    return str;
+  }
+
+  if (typeof val === 'object' && val !== null) {
+    const content = val.markdown_content || val.content || val.writtenContent || val.markdown || val.output || val.text || val.result;
+    if (content && content !== val) {
+      const extracted = extractCleanMarkdown(content);
+      if (extracted && extracted.trim().length > 0 && extracted !== '[object Object]') {
+        return extracted;
+      }
+    }
+
+    let combined = '';
+    for (const [key, item] of Object.entries(val)) {
+      if (['worker_id', 'workerId', 'taskId', 'runId', 'overall_goal', 'task_title', 'type', 'document_title'].includes(key)) {
+        continue;
+      }
+
+      const itemText = extractCleanMarkdown(item);
+      if (itemText && itemText.trim().length > 0 && itemText !== '[object Object]') {
+        const titleCaseKey = key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, (s) => s.toUpperCase());
+        combined += `#### ${titleCaseKey}\n\n${itemText.trim()}\n\n`;
+      }
+    }
+
+    if (combined.trim().length > 0) {
+      return combined.trim();
+    }
+
+    return JSON.stringify(val, null, 2);
+  }
+
+  return String(val || '');
+}
+
 export class ArtifactManager {
   /**
    * @param {Object} options
@@ -22,6 +79,10 @@ export class ArtifactManager {
     const evidenceDir = path.join(dir, 'evidence');
     if (!fs.existsSync(evidenceDir)) {
       fs.mkdirSync(evidenceDir, { recursive: true });
+    }
+    const deliverablesDir = path.join(dir, 'deliverables');
+    if (!fs.existsSync(deliverablesDir)) {
+      fs.mkdirSync(deliverablesDir, { recursive: true });
     }
     return dir;
   }
@@ -116,17 +177,24 @@ export class ArtifactManager {
           }
 
           if (data.summary) {
-            finalMarkdownContent += `### Worker Executive Summary & Findings\n${data.summary}\n\n`;
+            const cleanSummary = extractCleanMarkdown(data.summary);
+            finalMarkdownContent += `### Worker Executive Summary & Findings\n${cleanSummary}\n\n`;
           }
 
-          if (data.deliverables && typeof data.deliverables === 'object') {
-            finalMarkdownContent += `### Worker Deliverables & Written Content\n`;
-            for (const [key, val] of Object.entries(data.deliverables)) {
-              finalMarkdownContent += `#### ${key.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase())}\n`;
-              if (typeof val === 'string') {
-                finalMarkdownContent += `${val}\n\n`;
-              } else {
-                finalMarkdownContent += `${JSON.stringify(val, null, 2)}\n\n`;
+          if (data.deliverables) {
+            const cleanDeliverablesText = extractCleanMarkdown(data.deliverables);
+            if (cleanDeliverablesText && cleanDeliverablesText.trim().length > 0) {
+              finalMarkdownContent += `### Worker Deliverables & Written Content\n\n${cleanDeliverablesText.trim()}\n\n`;
+
+              // Also write clean standalone deliverable markdown file
+              const delivFileName = `deliverables/task_${taskId}.md`;
+              const delivHeader = `# Deliverable - Task [${taskId}]: ${title}\n\n- **Goal:** ${history.run?.goal}\n- **Completed At:** ${new Date().toISOString()}\n\n---\n\n`;
+              const delivMeta = this.writeArtifact(runId, delivFileName, delivHeader + cleanDeliverablesText.trim(), {
+                taskId,
+                mimeType: 'text/markdown',
+              });
+              if (history.artifacts) {
+                history.artifacts.push(delivMeta);
               }
             }
           }

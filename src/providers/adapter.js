@@ -129,13 +129,31 @@ function normalizeStructuredObject(obj, schema) {
 
     if (!obj.deliverables || typeof obj.deliverables !== 'object' || Array.isArray(obj.deliverables) || Object.keys(obj.deliverables).length === 0) {
       if (Array.isArray(obj.deliverables)) {
-        obj.deliverables = { output: obj.deliverables.join('\n\n') };
+        obj.deliverables = { writtenContent: obj.deliverables.join('\n\n') };
       } else if (typeof obj.deliverables === 'string') {
         obj.deliverables = { writtenContent: obj.deliverables };
       } else {
         const fallbackText = obj.summary || obj.text || obj.result || obj.content || 'Worker task execution output';
         obj.deliverables = { writtenContent: fallbackText };
       }
+    } else {
+      // If deliverables is an object containing nested content, normalize string values
+      const cleaned = {};
+      for (const [k, v] of Object.entries(obj.deliverables)) {
+        if (typeof v === 'string') {
+          cleaned[k] = v;
+        } else if (typeof v === 'object' && v !== null) {
+          const innerContent = v.markdown_content || v.content || v.writtenContent || v.markdown || v.output || v.text || v.result;
+          if (innerContent && typeof innerContent === 'string') {
+            cleaned[k] = innerContent;
+          } else {
+            cleaned[k] = JSON.stringify(v, null, 2);
+          }
+        } else {
+          cleaned[k] = String(v);
+        }
+      }
+      obj.deliverables = cleaned;
     }
 
     if (!obj.summary || obj.summary === 'Worker executed task successfully.') {

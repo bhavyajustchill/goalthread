@@ -74,13 +74,14 @@ export class GoalThread extends EventEmitter {
    */
   createModels() {
     const supervisorModel = createModelInstance(this.config.supervisor);
+    const workerModel = createModelInstance(this.config.worker);
     const worker1Model = createModelInstance(this.config.worker1);
     const worker2Model = createModelInstance(this.config.worker2);
     const workerModels = {
       worker_1: worker1Model,
       worker_2: worker2Model,
     };
-    return { supervisorModel, workerModel: worker1Model, workerModels };
+    return { supervisorModel, workerModel, workerModels };
   }
 
   /**
