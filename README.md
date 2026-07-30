@@ -1,9 +1,10 @@
-# GoalThread - Autonomous Supervisor-Worker AI SDK & CLI
+# GoalThread - Autonomous Multi-Worker Supervisor AI SDK & CLI
 
-**GoalThread** is a Node.js SDK and command-line application that completes complex goals using two independent AI threads:
+**GoalThread** is a Node.js SDK and command-line application that completes complex goals using specialized AI threads:
 
-1. **Supervisor Thread**: Plans the project, generates task contracts, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance (Default: `google/gemini-3.6-flash`).
-2. **Worker Thread**: Executes assigned tasks, returns structured evidence and deliverables, and reports limitations (Default: `deepseek/deepseek-v4-flash`).
+1. **Supervisor Thread**: Plans the project, divides tasks among specialized workers, reviews every result against acceptance criteria, requests corrections, and enforces final quality assurance (Default: `google/gemini-3.6-flash`).
+2. **Worker 1 (`worker_1`)**: Dedicated Text, Code & Analytical Reasoning Specialist (Default: `deepseek/deepseek-v4-flash`).
+3. **Worker 2 (`worker_2`)**: Dedicated Multimodal Vision, PDF Document OCR, Image Inspection & Chart/Table Parsing Specialist (Default: `deepseek/deepseek-v4-flash` or vision models).
 
 > 🌟 **Full Custom & Local LLM Support:** GoalThread works seamlessly with **OpenRouter**, **Groq**, **OpenAI**, **Anthropic**, OR **any 100% OpenAI-compatible AI Provider** (e.g. **LM Studio**, **Ollama**, **Jan**, **LocalAI**, **vLLM**, **FastChat**).
 
@@ -11,11 +12,14 @@
 
 ## ✨ Key Features
 
-- ⚡ **Dual-Thread Autonomous Architecture:** Separate Supervisor (Planner & Auditor) and Worker (Executor) roles prevent single-agent feedback loops.
+- ⚡ **Multi-Worker Autonomous Architecture:** Separate Supervisor (Planner & Auditor) and specialized Worker pool (`Worker 1` for text/code, `Worker 2` for vision/PDF OCR) prevent single-agent feedback loops.
+- 📎 **Attached Local Files Support (`-f, --file`):** Attach PDFs, images (`.png`, `.jpg`, `.jpeg`, `.webp`), or documents directly to your goal. The Supervisor automatically routes file parsing to **Worker 2**.
+- 👁️ **Automated PDF OCR & Vision Ingestion:** Built-in PDF stream OCR parser (`pdf-parse`) and multi-modal image base64 packager.
 - 🏠 **100% Custom & Local OpenAI-Compatible LLM Support:** Easily connect to LM Studio, Ollama, Jan, or custom cloud endpoints using `baseURL`.
+- 📝 **Clean Markdown Deliverable Persistence:** Saves pure Markdown deliverables without JSON wrappers in `./goalthread-runs/<runId>/final.md` and standalone files in `./goalthread-runs/<runId>/deliverables/task_<taskId>.md`.
+- 📜 **Full Execution Log Persistence:** Formatted visual CLI execution transcript saved to `./goalthread-runs/<runId>/execution.log`.
 - 🛡️ **Multi-Schema Resilient Normalization Layer:** Built-in JSON recovery & repair automatically handles loose or wrapped LLM outputs without crashing.
 - 🔄 **Best Candidate Evaluation on Max Retries:** When max retries are reached, GoalThread evaluates all attempt outputs and automatically selects the highest-scoring candidate.
-- 📂 **Per-Attempt Evidence Logging:** Generates standalone markdown evidence files for every attempt in `./goalthread-runs/<runId>/evidence/`.
 - 💾 **SQLite Transactional Persistence:** Full state checkpointing allows pausing, inspecting, and resuming runs at any time.
 
 ---
@@ -59,10 +63,15 @@ SUPERVISOR_PROVIDER=openrouter
 SUPERVISOR_MODEL=google/gemini-3.6-flash
 SUPERVISOR_API_KEY=sk-or-v1-your_openrouter_key_here
 
-# Dedicated Worker Configuration (Default: DeepSeek v4 Flash)
-WORKER_PROVIDER=openrouter
-WORKER_MODEL=deepseek/deepseek-v4-flash
-WORKER_API_KEY=sk-or-v1-your_openrouter_key_here
+# Dedicated Worker 1 Configuration (Text, Code & Reasoning)
+WORKER1_PROVIDER=openrouter
+WORKER1_MODEL=deepseek/deepseek-v4-flash
+WORKER1_API_KEY=sk-or-v1-your_openrouter_key_here
+
+# Dedicated Worker 2 Configuration (Vision & PDF OCR)
+WORKER2_PROVIDER=openrouter
+WORKER2_MODEL=google/gemini-2.0-flash-001
+WORKER2_API_KEY=sk-or-v1-your_openrouter_key_here
 
 # GoalThread Retry Settings
 GOALTHREAD_MAX_RETRIES=2
@@ -80,10 +89,15 @@ SUPERVISOR_PROVIDER=custom
 SUPERVISOR_MODEL=google/gemma-4-e4b
 SUPERVISOR_BASE_URL=http://localhost:1234/v1
 
-# Local LM Studio / Ollama for Worker Thread
-WORKER_PROVIDER=custom
-WORKER_MODEL=google/gemma-4-e4b
-WORKER_BASE_URL=http://localhost:1234/v1
+# Local LM Studio / Ollama for Worker 1 Thread
+WORKER1_PROVIDER=custom
+WORKER1_MODEL=google/gemma-4-e4b
+WORKER1_BASE_URL=http://localhost:1234/v1
+
+# Local LM Studio / Ollama for Worker 2 Thread
+WORKER2_PROVIDER=custom
+WORKER2_MODEL=google/gemma-4-e4b
+WORKER2_BASE_URL=http://localhost:1234/v1
 ```
 
 ---
@@ -98,26 +112,42 @@ node bin/goalthread.js doctor
 
 ---
 
-### 4. Run a Live Goal
+### 4. Run a Live Goal with Attached PDF/Image Files
 
-Submit your goal to the autonomous Supervisor-Worker loop:
+Submit your goal to the autonomous Supervisor-Worker loop with attached local documents:
 
 ```bash
-node bin/goalthread.js run "Write a systematic research review on explainable AI in healthcare"
+# Attach a PDF file for automatic Worker 2 PDF OCR processing
+node bin/goalthread.js run "Extract the financial performance table" -f sample_financial_report.pdf
 ```
 
 **Live CLI Output Example:**
 ```text
-🚀 Submitting Goal: Write a systematic research review on explainable AI in healthcare
+🚀 Submitting Goal: Extract the financial performance table
 
-- Supervisor planning goal specification...
-✔ Plan created: "Explainable AI in Healthcare Review"
-   Phases: Literature Collection -> Thematic Synthesis -> Final Report
-- Assigning first task to Worker thread...
-✔ Task passed [task_run_17_1]: Score 95/100
-✔ Task passed [task_run_17_2]: Score 95/100
-- Supervisor executing final quality gate verification...
-✔ 🎉 Goal Completed Successfully!
+📎 Attached Files: sample_financial_report.pdf
+
+Supervisor planning goal specification...
+📌 Run ID: run_1785404628177_7a3ea165
+
+✔ Plan created: "Financial Report Extraction"
+   Phases: Ingest PDF Document -> Synthesize Table
+
+⚙ Task assigned [task_run_17_1] -> [Worker 2]: Read PDF Document & Extract Table
+   Objective: Analyze attached 'sample_financial_report.pdf' via PDF OCR
+🤖 [Worker 2] starting execution [👁 Vision & PDF OCR Mode]...
+   📄 Ingested File: sample_financial_report.pdf (PDF - application/pdf)
+📝 [Worker 2] completed task [task_run_17_1]. Supervisor reviewing...
+   🧠 Executive Summary: Extracted Q1-Q4 Revenue & Operating Cost table from sample_financial_report.pdf.
+   📝 Deliverable Snippet: "| Quarter | Revenue ($M) | Operating Cost |\n| Q1 2024 | $12.4M | $3.2M |"
+
+✔ Task passed [task_run_17_1] [Worker 2] -> Status: PASS (95% Score)
+🔍 Supervisor executing final quality gate verification...
+
+🎉 Goal Completed Successfully!
+Deliverable generated at: goalthread-runs\run_1785404628177_7a3ea165\final.md
+Execution log saved at: goalthread-runs\run_1785404628177_7a3ea165\execution.log
+```
 
 Deliverable generated at: goalthread-runs\run_1785145679254_1e549388\final.md
 ```
@@ -249,9 +279,10 @@ client.on('GOAL_COMPLETED', (event) => {
   console.log('Final deliverable created at:', event.artifactPath);
 });
 
-// Execute goal
+// Execute goal with attached PDF file
 const result = await client.run({
-  goal: 'Prepare a competitive analysis report on top 5 cloud LLM providers',
+  goal: 'Prepare a financial analysis report based on Q3 performance',
+  files: ['./sample_financial_report.pdf'],
 });
 ```
 
@@ -262,7 +293,7 @@ const result = await client.run({
 | Command | Description |
 | :--- | :--- |
 | `goalthread init` | Initializes `.goalthread/` database & `.env` workspace. |
-| `goalthread run "<goal>"` | Starts autonomous goal execution. Supports `-r, --max-retries <number>` (default: `GOALTHREAD_MAX_RETRIES` or `2`). |
+| `goalthread run "<goal>"` | Starts autonomous goal execution. Supports `-f, --file <files...>` for attached documents/images, `-r, --max-retries <number>`, `--worker1-model`, `--worker2-model`. |
 | `goalthread list` | Lists all past and active goal Run IDs stored in SQLite. |
 | `goalthread resume <runId>` | Resumes an interrupted run from SQLite checkpoint. Supports `-r, --max-retries <number>`. |
 | `goalthread status <runId>` | Displays current phase, progress %, tokens used, and estimated cost. |
