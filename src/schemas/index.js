@@ -64,6 +64,7 @@ export const TaskContractSchema = z.object({
     goalSummary: z.string(),
     acceptedInputs: z.array(ArtifactReferenceSchema).default([]),
     priorTaskSummary: z.string().optional(),
+    filePaths: z.array(z.string()).default([]),
   }),
   instructions: z.array(z.string()).describe('Step-by-step execution instructions'),
   constraints: z.array(z.string()).default([]),

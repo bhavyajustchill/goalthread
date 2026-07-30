@@ -332,6 +332,7 @@ export async function generateStructuredOutput({
   model,
   schema,
   prompt,
+  messages,
   system,
   temperature = 0.1,
   maxRetries = 5,
@@ -340,7 +341,7 @@ export async function generateStructuredOutput({
   // Mock mode handling
   if (model instanceof MockLanguageModel) {
     if (typeof mockGenerator === 'function') {
-      const mockResult = mockGenerator(prompt);
+      const mockResult = mockGenerator(prompt || messages?.[0]?.content);
       return {
         object: schema.parse(mockResult),
         usage: { promptTokens: 100, completionTokens: 200, totalTokens: 300 },
@@ -364,12 +365,36 @@ export async function generateStructuredOutput({
   );
 
   if (isCustomProvider) {
+    let finalPrompt = prompt;
+    let finalMessages = messages;
+
+    if (messages) {
+      const hasImages = messages.some((m) =>
+        Array.isArray(m.content) && m.content.some((c) => c.type === 'image')
+      );
+
+      if (!hasImages) {
+        const textParts = [];
+        messages.forEach((m) => {
+          if (typeof m.content === 'string') {
+            textParts.push(m.content);
+          } else if (Array.isArray(m.content)) {
+            m.content.forEach((c) => {
+              if (c.type === 'text') textParts.push(c.text);
+            });
+          }
+        });
+        finalPrompt = textParts.join('\n\n');
+        finalMessages = undefined;
+      }
+    }
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const textResult = await generateText({
           model,
           system: `${system || ''}\nIMPORTANT: You must respond ONLY with a valid JSON object matching the required structure. Do not output conversational text or codeblock wrappers.`,
-          prompt,
+          ...(finalMessages ? { messages: finalMessages } : { prompt: finalPrompt }),
           temperature: Math.min(0.7, temperature + (attempt - 1) * 0.05),
         });
 
@@ -422,7 +447,7 @@ export async function generateStructuredOutput({
           model,
           schema,
           system,
-          prompt,
+          ...(messages ? { messages } : { prompt }),
           mode: 'json',
           temperature: Math.min(0.7, temperature + (attempt - 1) * 0.05),
         });
@@ -431,7 +456,7 @@ export async function generateStructuredOutput({
           model,
           schema,
           system,
-          prompt,
+          ...(messages ? { messages } : { prompt }),
           temperature: Math.min(0.7, temperature + (attempt - 1) * 0.05),
         });
       }

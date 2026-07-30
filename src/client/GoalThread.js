@@ -1,5 +1,7 @@
 import EventEmitter from 'events';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
 import { openDatabase } from '../storage/db.js';
 import { GoalThreadRepository } from '../storage/repository.js';
@@ -22,30 +24,40 @@ export class GoalThread extends EventEmitter {
   constructor(config = {}) {
     super();
 
+    const supBaseURL = config.supervisor?.baseURL || config.supervisor?.baseUrl || process.env.SUPERVISOR_BASE_URL || process.env.CUSTOM_BASE_URL;
+    const wrk1BaseURL = config.worker1?.baseURL || config.worker1?.baseUrl || process.env.WORKER1_BASE_URL || process.env.WORKER_BASE_URL || process.env.CUSTOM_BASE_URL;
+    const wrk2BaseURL = config.worker2?.baseURL || config.worker2?.baseUrl || process.env.WORKER2_BASE_URL || process.env.WORKER_BASE_URL || process.env.CUSTOM_BASE_URL;
+    const wrkBaseURL = config.worker?.baseURL || config.worker?.baseUrl || process.env.WORKER_BASE_URL || wrk1BaseURL || process.env.CUSTOM_BASE_URL;
+
+    const supProvider = config.supervisor?.provider || process.env.SUPERVISOR_PROVIDER || process.env.OPENROUTER_SUPERVISOR_PROVIDER || (supBaseURL ? 'custom' : 'openrouter');
+    const wrk1Provider = config.worker1?.provider || process.env.WORKER1_PROVIDER || config.worker?.provider || process.env.WORKER_PROVIDER || (wrk1BaseURL ? 'custom' : 'openrouter');
+    const wrk2Provider = config.worker2?.provider || process.env.WORKER2_PROVIDER || config.worker?.provider || process.env.WORKER_PROVIDER || (wrk2BaseURL ? 'custom' : 'openrouter');
+    const wrkProvider = config.worker?.provider || process.env.WORKER_PROVIDER || wrk1Provider || (wrkBaseURL ? 'custom' : 'openrouter');
+
     this.config = {
       supervisor: {
-        provider: config.supervisor?.provider || process.env.SUPERVISOR_PROVIDER || process.env.OPENROUTER_SUPERVISOR_PROVIDER || 'openrouter',
+        provider: supProvider,
         model: config.supervisor?.model || config.supervisor?.modelId || process.env.SUPERVISOR_MODEL || process.env.OPENROUTER_SUPERVISOR_MODEL || process.env.GROQ_SUPERVISOR_MODEL || 'google/gemini-3.6-flash',
         apiKey: config.supervisor?.apiKey || process.env.SUPERVISOR_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
-        baseURL: config.supervisor?.baseURL || config.supervisor?.baseUrl || process.env.SUPERVISOR_BASE_URL || process.env.CUSTOM_BASE_URL,
+        baseURL: supBaseURL,
       },
       worker: {
-        provider: config.worker?.provider || process.env.WORKER_PROVIDER || process.env.OPENROUTER_WORKER_PROVIDER || 'openrouter',
-        model: config.worker?.model || config.worker?.modelId || process.env.WORKER_MODEL || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
-        apiKey: config.worker?.apiKey || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
-        baseURL: config.worker?.baseURL || config.worker?.baseUrl || process.env.WORKER_BASE_URL || process.env.CUSTOM_BASE_URL,
+        provider: wrkProvider,
+        model: config.worker?.model || config.worker?.modelId || process.env.WORKER_MODEL || process.env.WORKER1_MODEL || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        apiKey: config.worker?.apiKey || process.env.WORKER_API_KEY || process.env.WORKER1_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
+        baseURL: wrkBaseURL,
       },
       worker1: {
-        provider: config.worker1?.provider || config.worker?.provider || process.env.WORKER1_PROVIDER || process.env.WORKER_PROVIDER || 'openrouter',
-        model: config.worker1?.model || config.worker1?.modelId || config.worker?.model || process.env.WORKER1_MODEL || process.env.WORKER_MODEL || 'deepseek/deepseek-v4-flash',
-        apiKey: config.worker1?.apiKey || config.worker?.apiKey || process.env.WORKER1_API_KEY || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY,
-        baseURL: config.worker1?.baseURL || config.worker1?.baseUrl || config.worker?.baseURL || process.env.WORKER1_BASE_URL || process.env.WORKER_BASE_URL,
+        provider: wrk1Provider,
+        model: config.worker1?.model || config.worker1?.modelId || process.env.WORKER1_MODEL || config.worker?.model || process.env.WORKER_MODEL || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        apiKey: config.worker1?.apiKey || process.env.WORKER1_API_KEY || config.worker?.apiKey || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY,
+        baseURL: wrk1BaseURL,
       },
       worker2: {
-        provider: config.worker2?.provider || config.worker?.provider || process.env.WORKER2_PROVIDER || process.env.WORKER_PROVIDER || 'openrouter',
-        model: config.worker2?.model || config.worker2?.modelId || config.worker?.model || process.env.WORKER2_MODEL || process.env.WORKER_MODEL || 'deepseek/deepseek-v4-flash',
-        apiKey: config.worker2?.apiKey || config.worker?.apiKey || process.env.WORKER2_API_KEY || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY,
-        baseURL: config.worker2?.baseURL || config.worker2?.baseUrl || config.worker?.baseURL || process.env.WORKER2_BASE_URL || process.env.WORKER_BASE_URL,
+        provider: wrk2Provider,
+        model: config.worker2?.model || config.worker2?.modelId || process.env.WORKER2_MODEL || config.worker?.model || process.env.WORKER_MODEL || process.env.OPENROUTER_WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        apiKey: config.worker2?.apiKey || process.env.WORKER2_API_KEY || config.worker?.apiKey || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY,
+        baseURL: wrk2BaseURL,
       },
       storage: {
         driver: config.storage?.driver || 'sqlite',
@@ -88,12 +100,24 @@ export class GoalThread extends EventEmitter {
    * Runs a new autonomous goal
    * @param {Object} options
    * @param {string} options.goal - User goal string
+   * @param {Array<string>} [options.files] - Optional attached file paths (PDFs, images, documents)
    * @param {Object} [options.limits] - Execution limits
    * @returns {Promise<Object>} Execution result summary
    */
-  async run({ goal, limits = {} }) {
+  async run({ goal, files = [], limits = {} }) {
     if (!goal || typeof goal !== 'string') {
       throw new ConfigInvalidError('A valid string goal is required.');
+    }
+
+    let attachedFiles = [];
+    if (files) {
+      const fileList = Array.isArray(files) ? files : [files];
+      attachedFiles = fileList.map((f) => path.resolve(String(f)));
+      for (const fp of attachedFiles) {
+        if (!fs.existsSync(fp)) {
+          throw new ConfigInvalidError(`Attached file does not exist: "${fp}"`);
+        }
+      }
     }
 
     const runId = `run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
@@ -110,7 +134,7 @@ export class GoalThread extends EventEmitter {
       limits,
     });
 
-    return engine.runGoal({ runId, goal, config: this.config });
+    return engine.runGoal({ runId, goal, files: attachedFiles, config: this.config });
   }
 
   /**

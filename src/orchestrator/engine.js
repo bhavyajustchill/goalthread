@@ -18,6 +18,7 @@ import {
 } from '../prompts/default-prompts.js';
 import { RunStateMachine } from './state-machine.js';
 import { BudgetExceededError, UserInputRequiredError, TaskRetryExhaustedError } from '../errors/index.js';
+import { prepareMultimodalPayload } from '../utils/vision.js';
 
 export class GoalThreadEngine {
   /**
@@ -178,16 +179,20 @@ export class GoalThreadEngine {
   /**
    * Initializes and executes goal
    */
-  async runGoal({ runId, goal, config }) {
+  async runGoal({ runId, goal, files = [], config }) {
     this.repo.createRun({ id: runId, goal, config });
-    this.emit('GOAL_CREATED', { runId, goal });
+    this.emit('GOAL_CREATED', { runId, goal, files });
 
     const stateMachine = new RunStateMachine('created');
     stateMachine.transitionTo('planning');
     this.repo.updateRunStatus(runId, 'planning', { phase: 'planning', progress: 5 });
 
+    const attachedFilesInfo = files.length > 0
+      ? `\n\nAttached Files Available for Goal Execution:\n${files.map((f) => `- ${f}`).join('\n')}`
+      : '';
+
     // Step 1: Create Goal Specification
-    const specPrompt = GOAL_SPECIFICATION_PROMPT.replace('{{GOAL}}', goal);
+    const specPrompt = GOAL_SPECIFICATION_PROMPT.replace('{{GOAL}}', goal + attachedFilesInfo);
     const specRes = await generateStructuredOutput({
       model: this.supervisorModel,
       schema: GoalSpecificationSchema,
@@ -206,13 +211,13 @@ export class GoalThreadEngine {
 
     // Step 2: Execute Plan Loop
     stateMachine.transitionTo('working');
-    return this.executeLoop(runId, stateMachine);
+    return this.executeLoop(runId, stateMachine, files);
   }
 
   /**
    * Main Autonomous Execution Loop
    */
-  async executeLoop(runId, stateMachine) {
+  async executeLoop(runId, stateMachine, files = []) {
     const run = this.repo.getRun(runId);
     const goalSpec = this.repo.getGoalSpecification(runId);
     let history = this.repo.getRunHistory(runId);
@@ -248,10 +253,15 @@ export class GoalThreadEngine {
             })
             .join('\n');
 
+          const attachedFilesStr = files && files.length > 0
+            ? files.map((f) => `- ${f}`).join('\n')
+            : 'None attached';
+
           const taskPrompt = TASK_GENERATION_PROMPT
             .replace('{{GOAL_SPEC}}', JSON.stringify({ title: goalSpec.title, objective: goalSpec.objective, completionCriteria: goalSpec.completionCriteria }))
             .replace('{{COMPLETED_HISTORY}}', compressedHistory || 'None yet')
-            .replace('{{CURRENT_PHASE}}', JSON.stringify({ phaseId: currentPhase.phaseId, title: currentPhase.title, description: currentPhase.description }));
+            .replace('{{CURRENT_PHASE}}', JSON.stringify({ phaseId: currentPhase.phaseId, title: currentPhase.title, description: currentPhase.description }))
+            .replace('{{ATTACHED_FILES}}', attachedFilesStr);
 
           const taskRes = await generateStructuredOutput({
             model: this.supervisorModel,
@@ -276,6 +286,17 @@ export class GoalThreadEngine {
             attemptNumber,
           };
 
+          if (files && files.length > 0) {
+            if (!taskContract.context) taskContract.context = { goalSummary: goalSpec?.title || run?.goal || 'Attached files task' };
+            if (!Array.isArray(taskContract.context.filePaths) || taskContract.context.filePaths.length === 0) {
+              taskContract.context.filePaths = files;
+            }
+            const hasMediaOrPdf = files.some((f) => /\.(pdf|png|jpg|jpeg|webp|gif)$/i.test(f));
+            if (hasMediaOrPdf && (!taskContract.assignedWorkerId || taskContract.assignedWorkerId === 'worker_1')) {
+              taskContract.assignedWorkerId = 'worker_2';
+            }
+          }
+
           if (!taskContract.title || taskContract.title === 'Execute Task') {
             taskContract.title = currentPhase.title || goalSpec?.title || 'Execute Goal Phase';
           }
@@ -296,13 +317,6 @@ export class GoalThreadEngine {
           this.repo.saveTask(taskContract);
           this.emit('TASK_ASSIGNED', { runId, task: taskContract, workerId: targetWorkerId });
 
-          // 2. Worker executes Task Contract
-          this.emit('WORKER_STARTED', {
-            runId,
-            taskId,
-            workerId: targetWorkerId,
-            model: targetWorkerModel.modelId || targetWorkerModel.model || 'worker_model',
-          });
           const workerPrompt = `You are the Autonomous Worker Thread [${targetWorkerId}] executing a task for the overall goal: "${goalSpec?.title || goalSpec?.objective || 'Goal Execution'}"
 
 Overall Goal Objective: ${goalSpec?.objective || 'Goal Execution'}
@@ -316,10 +330,39 @@ ${Array.isArray(taskContract.instructions) ? taskContract.instructions.map((i) =
 CRITICAL MANDATE:
 You must write the COMPLETE, THOROUGH, LONG-FORM, UNTRUNCATED deliverable text (Markdown guide, technical article, code examples, comparison tables, and analysis).
 Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the complete written deliverable content under the 'deliverables' field in your JSON response!`;
+
+          let filePathsToProcess = taskContract.context?.filePaths || [];
+          if (Array.isArray(taskContract.instructions)) {
+            taskContract.instructions.forEach((inst) => {
+              const matches = inst.match(/[\w\-./\\]+\.(pdf|png|jpg|jpeg|webp|gif)/gi);
+              if (matches) {
+                matches.forEach((m) => {
+                  if (!filePathsToProcess.includes(m)) filePathsToProcess.push(m);
+                });
+              }
+            });
+          }
+
+          const multimodalData = await prepareMultimodalPayload({
+            prompt: workerPrompt,
+            filePaths: filePathsToProcess,
+          });
+
+          // 2. Worker executes Task Contract
+          this.emit('WORKER_STARTED', {
+            runId,
+            taskId,
+            workerId: targetWorkerId,
+            model: targetWorkerModel.modelId || targetWorkerModel.model || 'worker_model',
+            isVisionActive: multimodalData.multimodalActive,
+            extractedFiles: multimodalData.extractedFiles,
+          });
+
           const workerRes = await generateStructuredOutput({
             model: targetWorkerModel,
             schema: WorkerResultSchema,
             prompt: workerPrompt,
+            ...(multimodalData.multimodalActive ? { messages: multimodalData.messages } : {}),
             system: WORKER_SYSTEM_PROMPT,
             mockGenerator: this.createMockGenerator('workerResult', {
               taskId,

@@ -43,6 +43,7 @@ program
 program
   .command("run <goal>")
   .description("Execute an autonomous goal using Supervisor and Worker threads")
+  .option("-f, --file <files...>", "Attach local file paths (PDFs, images, documents) for goal execution")
   .option("-s, --supervisor-model <model>", "Supervisor model override")
   .option("-w, --worker-model <model>", "Worker model override (applies to Worker 1 & Worker 2)")
   .option("--worker1-model <model>", "Worker 1 model override")
@@ -71,6 +72,7 @@ program
   .option("--mock", "Run in offline mock mode for testing")
   .action(async (goal, options) => {
     let activeRunId = null;
+    const attachedFiles = options.file ? (Array.isArray(options.file) ? options.file : [options.file]) : [];
 
     const client = new GoalThread({
       supervisor: {
@@ -107,6 +109,9 @@ program
     };
 
     logEvent(chalk.bold.cyan(`\n🚀 Submitting Goal: `) + goal + "\n");
+    if (attachedFiles.length > 0) {
+      logEvent(chalk.cyan(`📎 Attached Files: `) + attachedFiles.join(", ") + "\n");
+    }
     logEvent(chalk.gray("Supervisor planning goal specification..."));
 
     client.on("GOAL_CREATED", (evt) => {
@@ -133,7 +138,13 @@ program
 
     client.on("WORKER_STARTED", (evt) => {
       const wLabel = evt.workerId === "worker_2" ? "Worker 2" : "Worker 1";
-      logEvent(chalk.blue(`🤖 [${wLabel}] starting execution...`));
+      const modeInfo = evt.isVisionActive ? " [👁 Vision & PDF OCR Mode]" : "";
+      logEvent(chalk.blue(`🤖 [${wLabel}] starting execution${modeInfo}...`));
+      if (evt.extractedFiles && Array.isArray(evt.extractedFiles) && evt.extractedFiles.length > 0) {
+        evt.extractedFiles.forEach((f) => {
+          logEvent(chalk.cyan(`   📄 Ingested File: ${f.fileName} (${f.type.toUpperCase()} - ${f.mimeType})`));
+        });
+      }
     });
 
     client.on("WORKER_COMPLETED", (evt) => {
@@ -234,6 +245,7 @@ program
     try {
       await client.run({
         goal,
+        files: attachedFiles,
         limits: {
           maxTasks: options.maxTasks,
           maxAttemptsPerTask:
