@@ -121,6 +121,8 @@ function normalizeStructuredObject(obj, schema) {
   if (isWorkerResult) {
     if (!obj.taskId) obj.taskId = `task_${Date.now()}`;
     if (!obj.runId) obj.runId = `run_${Date.now()}`;
+    if (!obj.workerId) obj.workerId = obj.worker_id || 'worker_1';
+    if (!obj.reasoning) obj.reasoning = obj.thoughtProcess || obj.summary || 'Worker executed assigned task contract';
     if (!obj.status || !['completed', 'partial', 'blocked', 'failed'].includes(obj.status)) {
       obj.status = 'completed';
     }
@@ -168,6 +170,7 @@ function normalizeStructuredObject(obj, schema) {
     if (!obj.taskId) obj.taskId = obj.task_id || `task_${Date.now()}`;
     if (!obj.runId) obj.runId = `run_${Date.now()}`;
     if (!obj.phaseId) obj.phaseId = 'phase_1';
+    if (!obj.assignedWorkerId) obj.assignedWorkerId = obj.assignedWorker || obj.workerId || obj.worker_id || 'worker_1';
     if (!obj.title) obj.title = obj.name || obj.task || obj.action || 'Execute Task';
     if (!obj.objective) obj.objective = obj.title || 'Execute task objective';
     if (typeof obj.sequence !== 'number') obj.sequence = 1;

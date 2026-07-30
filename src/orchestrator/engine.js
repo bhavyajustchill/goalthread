@@ -34,6 +34,7 @@ export class GoalThreadEngine {
     artifactManager,
     supervisorModel,
     workerModel,
+    workerModels,
     eventEmitter,
     limits = {},
   }) {
@@ -43,6 +44,10 @@ export class GoalThreadEngine {
     this.emitter = eventEmitter;
     this.supervisorModel = supervisorModel;
     this.workerModel = workerModel;
+    this.workerModels = workerModels || {
+      worker_1: workerModel,
+      worker_2: workerModel,
+    };
 
     const envRetries = process.env.GOALTHREAD_MAX_RETRIES ? parseInt(process.env.GOALTHREAD_MAX_RETRIES, 10) : NaN;
 
@@ -283,12 +288,20 @@ export class GoalThreadEngine {
             ];
           }
 
+          const targetWorkerId = taskContract.assignedWorkerId || 'worker_1';
+          const targetWorkerModel = this.workerModels[targetWorkerId] || this.workerModels['worker_1'] || this.workerModel;
+
           this.repo.saveTask(taskContract);
-          this.emit('TASK_ASSIGNED', { runId, task: taskContract });
+          this.emit('TASK_ASSIGNED', { runId, task: taskContract, workerId: targetWorkerId });
 
           // 2. Worker executes Task Contract
-          this.emit('WORKER_STARTED', { runId, taskId });
-          const workerPrompt = `You are the Autonomous Worker Thread executing a task for the overall goal: "${goalSpec?.title || goalSpec?.objective || 'Goal Execution'}"
+          this.emit('WORKER_STARTED', {
+            runId,
+            taskId,
+            workerId: targetWorkerId,
+            model: targetWorkerModel.modelId || targetWorkerModel.model || 'worker_model',
+          });
+          const workerPrompt = `You are the Autonomous Worker Thread [${targetWorkerId}] executing a task for the overall goal: "${goalSpec?.title || goalSpec?.objective || 'Goal Execution'}"
 
 Overall Goal Objective: ${goalSpec?.objective || 'Goal Execution'}
 
@@ -302,7 +315,7 @@ CRITICAL MANDATE:
 You must write the COMPLETE, THOROUGH, LONG-FORM, UNTRUNCATED deliverable text (Markdown guide, technical article, code examples, comparison tables, and analysis).
 Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the complete written deliverable content under the 'deliverables' field in your JSON response!`;
           const workerRes = await generateStructuredOutput({
-            model: this.workerModel,
+            model: targetWorkerModel,
             schema: WorkerResultSchema,
             prompt: workerPrompt,
             system: WORKER_SYSTEM_PROMPT,
@@ -313,9 +326,9 @@ Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the compl
             }),
           });
 
-          const workerResult = { ...workerRes.object, taskId, runId };
+          const workerResult = { ...workerRes.object, taskId, runId, workerId: targetWorkerId };
           this.repo.saveWorkerResult(workerResult);
-          this.emit('WORKER_COMPLETED', { runId, result: workerResult });
+          this.emit('WORKER_COMPLETED', { runId, result: workerResult, workerId: targetWorkerId });
 
           // 3. Supervisor reviews Worker Result
           this.emit('SUPERVISOR_REVIEW_STARTED', { runId, taskId });
@@ -346,9 +359,10 @@ Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the compl
           const recordScore = typeof lastReview.score === 'number' ? lastReview.score : (lastReview.decision === 'PASS' ? 100 : (lastReview.decision === 'PARTIAL' ? 65 : 40));
 
           // Save attempt evidence artifact file
-          let attemptEvidenceText = `# Evidence Log - Task [${taskId}] Attempt ${attemptNumber}\n\n`;
+          let attemptEvidenceText = `# Evidence Log - Task [${taskId}] [${targetWorkerId}] Attempt ${attemptNumber}\n\n`;
           attemptEvidenceText += `- **Run ID:** ${runId}\n`;
           attemptEvidenceText += `- **Task ID:** ${taskId}\n`;
+          attemptEvidenceText += `- **Assigned Worker:** ${targetWorkerId}\n`;
           attemptEvidenceText += `- **Attempt Number:** ${attemptNumber}\n`;
           attemptEvidenceText += `- **Supervisor Decision:** \`${lastReview.decision}\`\n`;
           attemptEvidenceText += `- **Supervisor Score:** ${recordScore}%\n`;
@@ -385,7 +399,7 @@ Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the compl
           if (this.artifactManager && typeof this.artifactManager.writeArtifact === 'function') {
             evidenceMeta = this.artifactManager.writeArtifact(
               runId,
-              `evidence/task_${taskId}_attempt_${attemptNumber}.md`,
+              `evidence/task_${taskId}_${targetWorkerId}_attempt_${attemptNumber}.md`,
               attemptEvidenceText,
               { taskId, mimeType: 'text/markdown' }
             );
@@ -395,6 +409,7 @@ Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the compl
           attemptRecords.push({
             attemptNumber,
             taskId,
+            workerId: targetWorkerId,
             taskContract,
             workerResult,
             review: lastReview,
@@ -417,6 +432,7 @@ Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the compl
             this.emit('TASK_PASSED', {
               runId,
               taskId,
+              workerId: targetWorkerId,
               review: lastReview,
               attemptNumber,
               outcomeStatus: 'PASS',
@@ -434,6 +450,7 @@ Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the compl
             this.emit('TASK_FAILED', {
               runId,
               taskId,
+              workerId: targetWorkerId,
               review: lastReview,
               scorePercentage: `${recordScore}%`,
               currentAttempt: attemptNumber,
@@ -444,6 +461,7 @@ Do NOT write 1-line stubs, placeholders, or meta descriptions. Provide the compl
               this.emit('TASK_RETRYING', {
                 runId,
                 taskId,
+                workerId: targetWorkerId,
                 attemptNumber,
                 maxAttempts: this.limits.maxAttemptsPerTask,
               });

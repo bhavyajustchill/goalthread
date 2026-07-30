@@ -35,6 +35,18 @@ export class GoalThread extends EventEmitter {
         apiKey: config.worker?.apiKey || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
         baseURL: config.worker?.baseURL || config.worker?.baseUrl || process.env.WORKER_BASE_URL || process.env.CUSTOM_BASE_URL,
       },
+      worker1: {
+        provider: config.worker1?.provider || config.worker?.provider || process.env.WORKER1_PROVIDER || process.env.WORKER_PROVIDER || 'openrouter',
+        model: config.worker1?.model || config.worker1?.modelId || config.worker?.model || process.env.WORKER1_MODEL || process.env.WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        apiKey: config.worker1?.apiKey || config.worker?.apiKey || process.env.WORKER1_API_KEY || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY,
+        baseURL: config.worker1?.baseURL || config.worker1?.baseUrl || config.worker?.baseURL || process.env.WORKER1_BASE_URL || process.env.WORKER_BASE_URL,
+      },
+      worker2: {
+        provider: config.worker2?.provider || config.worker?.provider || process.env.WORKER2_PROVIDER || process.env.WORKER_PROVIDER || 'openrouter',
+        model: config.worker2?.model || config.worker2?.modelId || config.worker?.model || process.env.WORKER2_MODEL || process.env.WORKER_MODEL || 'deepseek/deepseek-v4-flash',
+        apiKey: config.worker2?.apiKey || config.worker?.apiKey || process.env.WORKER2_API_KEY || process.env.WORKER_API_KEY || process.env.OPENROUTER_API_KEY,
+        baseURL: config.worker2?.baseURL || config.worker2?.baseUrl || config.worker?.baseURL || process.env.WORKER2_BASE_URL || process.env.WORKER_BASE_URL,
+      },
       storage: {
         driver: config.storage?.driver || 'sqlite',
         path: config.storage?.path || process.env.GOALTHREAD_DB_PATH || './.goalthread/goalthread.db',
@@ -62,8 +74,13 @@ export class GoalThread extends EventEmitter {
    */
   createModels() {
     const supervisorModel = createModelInstance(this.config.supervisor);
-    const workerModel = createModelInstance(this.config.worker);
-    return { supervisorModel, workerModel };
+    const worker1Model = createModelInstance(this.config.worker1);
+    const worker2Model = createModelInstance(this.config.worker2);
+    const workerModels = {
+      worker_1: worker1Model,
+      worker_2: worker2Model,
+    };
+    return { supervisorModel, workerModel: worker1Model, workerModels };
   }
 
   /**
@@ -80,13 +97,14 @@ export class GoalThread extends EventEmitter {
 
     const runId = `run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const repository = await this.initStorage();
-    const { supervisorModel, workerModel } = this.createModels();
+    const { supervisorModel, workerModel, workerModels } = this.createModels();
 
     const engine = new GoalThreadEngine({
       repository,
       artifactManager: this.artifactManager,
       supervisorModel,
       workerModel,
+      workerModels,
       eventEmitter: this,
       limits,
     });
@@ -112,13 +130,14 @@ export class GoalThread extends EventEmitter {
     }
 
     const stateMachine = new RunStateMachine(history.run.status);
-    const { supervisorModel, workerModel } = this.createModels();
+    const { supervisorModel, workerModel, workerModels } = this.createModels();
 
     const engine = new GoalThreadEngine({
       repository,
       artifactManager: this.artifactManager,
       supervisorModel,
       workerModel,
+      workerModels,
       eventEmitter: this,
       limits: history.run.config?.execution || {},
     });

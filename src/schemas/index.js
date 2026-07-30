@@ -56,6 +56,7 @@ export const TaskContractSchema = z.object({
   taskId: z.string().describe('Unique task ID'),
   runId: z.string().describe('Associated run ID'),
   phaseId: z.string().describe('Associated phase ID'),
+  assignedWorkerId: z.string().default('worker_1').describe('ID of assigned worker thread e.g. worker_1 or worker_2'),
   sequence: z.number().describe('Sequence number in execution timeline'),
   title: z.string().describe('Short task title'),
   objective: z.string().describe('Single primary task objective'),
@@ -105,6 +106,8 @@ export const CitationRecordSchema = z.object({
 export const WorkerResultSchema = z.object({
   taskId: z.string(),
   runId: z.string(),
+  workerId: z.string().default('worker_1').describe('ID of executing worker thread'),
+  reasoning: z.string().optional().describe('Worker thought process or reasoning'),
   status: z.enum(['completed', 'partial', 'blocked', 'failed']),
   summary: z.string().describe('Concise summary of work performed'),
   deliverables: z.record(z.unknown()).describe('Output data or key-value deliverables'),

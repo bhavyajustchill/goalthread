@@ -44,7 +44,9 @@ program
   .command("run <goal>")
   .description("Execute an autonomous goal using Supervisor and Worker threads")
   .option("-s, --supervisor-model <model>", "Supervisor model override")
-  .option("-w, --worker-model <model>", "Worker model override")
+  .option("-w, --worker-model <model>", "Worker model override (applies to Worker 1 & Worker 2)")
+  .option("--worker1-model <model>", "Worker 1 model override")
+  .option("--worker2-model <model>", "Worker 2 model override")
   .option(
     "--supervisor-provider <provider>",
     "Supervisor provider override (groq, openrouter, openai, custom)",
@@ -54,7 +56,11 @@ program
     "--worker-provider <provider>",
     "Worker provider override (groq, openrouter, openai, custom)",
   )
+  .option("--worker1-provider <provider>", "Worker 1 provider override")
+  .option("--worker2-provider <provider>", "Worker 2 provider override")
   .option("--worker-base-url <url>", "Worker base URL for custom provider")
+  .option("--worker1-base-url <url>", "Worker 1 base URL for custom provider")
+  .option("--worker2-base-url <url>", "Worker 2 base URL for custom provider")
   .option("-m, --max-tasks <number>", "Maximum tasks limit", parseInt, 100)
   .option(
     "-r, --max-retries <number>",
@@ -64,8 +70,7 @@ program
   )
   .option("--mock", "Run in offline mock mode for testing")
   .action(async (goal, options) => {
-    console.log(chalk.bold.cyan(`\n🚀 Submitting Goal:`), goal, "\n");
-    console.log(chalk.gray("Supervisor planning goal specification..."));
+    let activeRunId = null;
 
     const client = new GoalThread({
       supervisor: {
@@ -80,66 +85,116 @@ program
         ...(options.workerModel ? { model: options.workerModel } : {}),
         ...(options.workerBaseUrl ? { baseURL: options.workerBaseUrl } : {}),
       },
+      worker1: {
+        ...(options.mock ? { provider: "mock" } : {}),
+        ...(options.worker1Provider || options.workerProvider ? { provider: options.worker1Provider || options.workerProvider } : {}),
+        ...(options.worker1Model || options.workerModel ? { model: options.worker1Model || options.workerModel } : {}),
+        ...(options.worker1BaseUrl || options.workerBaseUrl ? { baseURL: options.worker1BaseUrl || options.workerBaseUrl } : {}),
+      },
+      worker2: {
+        ...(options.mock ? { provider: "mock" } : {}),
+        ...(options.worker2Provider || options.workerProvider ? { provider: options.worker2Provider || options.workerProvider } : {}),
+        ...(options.worker2Model || options.workerModel ? { model: options.worker2Model || options.workerModel } : {}),
+        ...(options.worker2BaseUrl || options.workerBaseUrl ? { baseURL: options.worker2BaseUrl || options.workerBaseUrl } : {}),
+      },
     });
 
+    const logEvent = (text) => {
+      console.log(text);
+      if (activeRunId && client.artifactManager) {
+        client.artifactManager.appendExecutionLog(activeRunId, text);
+      }
+    };
+
+    logEvent(chalk.bold.cyan(`\n🚀 Submitting Goal: `) + goal + "\n");
+    logEvent(chalk.gray("Supervisor planning goal specification..."));
+
     client.on("GOAL_CREATED", (evt) => {
-      console.log(chalk.bold.yellow(`📌 Run ID:`), evt.runId);
+      activeRunId = evt.runId;
+      logEvent(chalk.bold.yellow(`📌 Run ID: `) + evt.runId);
     });
 
     client.on("PLAN_CREATED", (evt) => {
-      console.log(chalk.green.bold(`\n✔ Plan created: "${evt.spec.title}"`));
-      console.log(
+      logEvent(chalk.green.bold(`\n✔ Plan created: "${evt.spec.title}"`));
+      logEvent(
         chalk.gray(`   Phases: ${evt.spec.proposedPhases.map((p) => p.title).join(" -> ")}\n`),
       );
     });
 
     client.on("TASK_ASSIGNED", (evt) => {
-      console.log(chalk.cyan(`⚙ Task assigned [${evt.task.taskId}]: ${evt.task.title}`));
+      const wLabel = evt.workerId === "worker_2" ? "Worker 2" : "Worker 1";
+      logEvent(
+        chalk.cyan(`⚙ Task assigned [${evt.task.taskId}] -> [${wLabel}]: ${evt.task.title}`),
+      );
+      if (evt.task.objective && evt.task.objective !== evt.task.title) {
+        logEvent(chalk.gray(`   Objective: ${evt.task.objective}`));
+      }
+    });
+
+    client.on("WORKER_STARTED", (evt) => {
+      const wLabel = evt.workerId === "worker_2" ? "Worker 2" : "Worker 1";
+      logEvent(chalk.blue(`🤖 [${wLabel}] starting execution...`));
     });
 
     client.on("WORKER_COMPLETED", (evt) => {
-      console.log(
-        chalk.blue(`📝 Worker completed task [${evt.result.taskId}]. Supervisor reviewing...`),
+      const wLabel = evt.workerId === "worker_2" ? "Worker 2" : "Worker 1";
+      logEvent(
+        chalk.blue.bold(`📝 [${wLabel}] completed task [${evt.result.taskId}]. Supervisor reviewing...`),
       );
+      if (evt.result.summary) {
+        logEvent(chalk.blue(`   🧠 Executive Summary: ${evt.result.summary}`));
+      }
+      if (evt.result.deliverables && typeof evt.result.deliverables === "object") {
+        const firstVal = Object.values(evt.result.deliverables)[0];
+        if (firstVal) {
+          const snippet = typeof firstVal === "string" ? firstVal.slice(0, 180).replace(/\n/g, " ") : JSON.stringify(firstVal).slice(0, 180);
+          logEvent(chalk.gray(`   📝 Deliverable Snippet: "${snippet}..."`));
+        }
+      }
     });
 
     client.on("TASK_PASSED", (evt) => {
+      const wLabel = evt.workerId === "worker_2" ? "Worker 2" : "Worker 1";
       if (evt.isBestCandidate) {
-        console.log(
+        logEvent(
           chalk.yellow.bold(
-            `⭐ Selected Best Candidate Output for [${evt.taskId}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`,
+            `⭐ Selected Best Candidate Output for [${evt.taskId}] [${wLabel}] -> Status: ${evt.outcomeStatus} (${evt.scorePercentage} Score)`,
           ),
         );
       } else {
-        console.log(
+        logEvent(
           chalk.green.bold(
-            `✔ Task passed [${evt.taskId}] -> Status: ${evt.outcomeStatus || "PASS"} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`,
+            `✔ Task passed [${evt.taskId}] [${wLabel}] -> Status: ${evt.outcomeStatus || "PASS"} (${evt.scorePercentage || `${evt.review.score}%`} Score)\n`,
           ),
         );
+      }
+      if (evt.review?.reviewSummary) {
+        logEvent(chalk.gray(`   🔍 Supervisor Evaluation: ${evt.review.reviewSummary}`));
       }
     });
 
     client.on("TASK_FAILED", (evt) => {
+      const wLabel = evt.workerId === "worker_2" ? "Worker 2" : "Worker 1";
       const attemptsInfo =
         evt.currentAttempt && evt.maxAttempts
           ? `Attempt ${evt.currentAttempt}/${evt.maxAttempts}`
           : "Attempt";
-      console.log(
+      logEvent(
         chalk.yellow(
-          `⚠ ${attemptsInfo} for [${evt.taskId}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`,
+          `⚠ ${attemptsInfo} for [${evt.taskId}] [${wLabel}] scored ${evt.scorePercentage || `${evt.review.score}%`} (Decision: ${evt.review.decision})`,
         ),
       );
-      if (evt.review.reviewSummary || evt.review.feedback) {
-        console.log(
+      if (evt.review?.reviewSummary || evt.review?.feedback) {
+        logEvent(
           chalk.yellow(
-            `   Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`,
+            `   🔍 Supervisor Feedback: ${evt.review.reviewSummary || evt.review.feedback}`,
           ),
         );
       }
     });
 
     client.on("BEST_CANDIDATE_SELECTED", (evt) => {
-      console.log(
+      logEvent(
         chalk.yellow.bold(
           `\n🏆 Max retries (${evt.totalAttempts}) reached. Evaluated all outputs -> Selected Best Candidate Attempt ${evt.attemptNumber} [Status: ${evt.outcomeStatus}, Score: ${evt.scorePercentage}]\n`,
         ),
@@ -147,7 +202,7 @@ program
     });
 
     client.on("INVALID_JSON_FALLBACK", (evt) => {
-      console.log(
+      logEvent(
         chalk.yellow.bold(
           `\n⚠️ Invalid JSON output on attempt ${evt.attemptNumber}. Automatically falling back to best previous iteration output with Supervisor review!\n`,
         ),
@@ -155,21 +210,25 @@ program
     });
 
     client.on("TASK_RETRYING", (evt) => {
+      const wLabel = evt.workerId === "worker_2" ? "Worker 2" : "Worker 1";
       const maxInfo = evt.maxAttempts ? `/${evt.maxAttempts}` : "";
-      console.log(
+      logEvent(
         chalk.magenta(
-          `🔄 Retrying task [${evt.taskId}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`,
+          `🔄 Retrying task [${evt.taskId}] [${wLabel}] (Attempt ${evt.attemptNumber}${maxInfo})...\n`,
         ),
       );
     });
 
     client.on("FINAL_QA_STARTED", () => {
-      console.log(chalk.cyan(`🔍 Supervisor executing final quality gate verification...`));
+      logEvent(chalk.cyan(`🔍 Supervisor executing final quality gate verification...`));
     });
 
     client.on("GOAL_COMPLETED", (evt) => {
-      console.log(chalk.green.bold("\n🎉 Goal Completed Successfully!"));
-      console.log(chalk.cyan(`Deliverable generated at:`), evt.artifactPath, "\n");
+      logEvent(chalk.green.bold("\n🎉 Goal Completed Successfully!"));
+      logEvent(chalk.cyan(`Deliverable generated at: `) + evt.artifactPath);
+      if (activeRunId) {
+        logEvent(chalk.gray(`Execution log saved at: `) + path.join(client.artifactManager.baseDirectory, activeRunId, "execution.log") + "\n");
+      }
     });
 
     try {

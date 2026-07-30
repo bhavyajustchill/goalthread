@@ -27,6 +27,17 @@ export class ArtifactManager {
   }
 
   /**
+   * Appends line(s) to execution.log file for a run
+   */
+  appendExecutionLog(runId, text) {
+    if (!runId || !text) return;
+    const runDir = this.getRunDirectory(runId);
+    const logPath = path.join(runDir, 'execution.log');
+    const cleanText = text.replace(/\u001b\[[0-9;]*m/g, ''); // strip ANSI color codes for clean file output
+    fs.appendFileSync(logPath, cleanText + '\n', 'utf8');
+  }
+
+  /**
    * Calculates MD5 checksum for a file or string
    */
   calculateChecksum(content) {
